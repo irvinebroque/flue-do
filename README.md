@@ -56,7 +56,7 @@ Open the web demo:
 http://localhost:3583/
 ```
 
-The page uses Kumo's standalone stylesheet and a familiar chat layout. It triggers the same agent endpoint with `Accept: text/event-stream`, renders Flue run events live as chat messages, and then shows the final structured outcome as the last assistant response.
+The page uses Kumo's standalone stylesheet and a familiar chat layout. It triggers the same agent endpoint with `Accept: text/event-stream`, renders Flue run events live as chat messages, and then shows the final structured outcome as the last assistant response. The sidebar stores a local index of chat ids and run ids; each chat id maps to one Cloudflare Durable Object agent instance.
 
 Call the demo agent:
 
@@ -67,6 +67,8 @@ curl http://localhost:3583/agents/serverless-coding-demo/demo-session-1 \
 ```
 
 Reuse the same `demo-session-1` id to demonstrate Durable Object scoped state across requests.
+
+On Cloudflare, each `/agents/serverless-coding-demo/<id>` URL maps to one Durable Object. Flue stores the session history in that DO's SQLite storage, `@cloudflare/shell` stores the Workspace in the same DO storage, and run events are persisted in run-history tables in that DO. A small registry Durable Object maps `runId` values back to the owning agent instance so `/runs/<runId>/events` can replay the durable event log.
 
 The JSON response includes:
 

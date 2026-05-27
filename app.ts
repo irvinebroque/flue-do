@@ -26,6 +26,87 @@ const html = String.raw`<!doctype html>
 
     .app-shell {
       display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      border-right: 1px solid var(--color-kumo-hairline, rgba(0, 0, 0, 0.12));
+      background: var(--color-kumo-base, #fff);
+      padding: 14px;
+    }
+
+    .sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .sidebar-title { margin: 0; font-size: 0.9rem; font-weight: 700; }
+
+    .new-chat-button {
+      min-height: 30px;
+      border: 1px solid var(--color-kumo-hairline, rgba(0, 0, 0, 0.12));
+      border-radius: 8px;
+      background: var(--color-kumo-base, #fff);
+      color: var(--text-color-kumo-default, #171717);
+      cursor: pointer;
+      padding: 0 10px;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+
+    .chat-list { display: grid; gap: 6px; }
+
+    .chat-item {
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-color-kumo-default, #171717);
+      cursor: pointer;
+      padding: 9px;
+      text-align: left;
+    }
+
+    .chat-item:hover,
+    .chat-item.active {
+      border-color: var(--color-kumo-hairline, rgba(0, 0, 0, 0.12));
+      background: var(--color-kumo-tint, #f5f5f5);
+    }
+
+    .chat-item-title {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+
+    .chat-item-meta {
+      display: block;
+      margin-top: 3px;
+      color: var(--text-color-kumo-subtle, #666);
+      font-size: 0.74rem;
+    }
+
+    .sidebar-note {
+      margin: 14px 2px 0;
+      color: var(--text-color-kumo-subtle, #666);
+      font-size: 0.78rem;
+      line-height: 1.45;
+    }
+
+    .main-pane {
+      min-width: 0;
+      display: grid;
       grid-template-rows: auto minmax(0, 1fr) auto;
       min-height: 100vh;
     }
@@ -34,7 +115,7 @@ const html = String.raw`<!doctype html>
       position: sticky;
       top: 0;
       z-index: 10;
-      border-bottom: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border-bottom: 1px solid var(--color-kumo-hairline, rgba(0, 0, 0, 0.12));
       background: var(--color-kumo-base, #fff);
     }
 
@@ -66,7 +147,7 @@ const html = String.raw`<!doctype html>
       gap: 8px;
       min-height: 30px;
       padding: 0 10px;
-      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border: 1px solid var(--color-kumo-hairline, rgba(0, 0, 0, 0.12));
       border-radius: 999px;
       color: var(--text-color-kumo-subtle, #a3a3a3);
       background: var(--color-kumo-base, #fff);
@@ -101,7 +182,7 @@ const html = String.raw`<!doctype html>
 
     .empty-card {
       width: min(100%, 680px);
-      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border: 1px solid var(--color-kumo-hairline, rgba(0, 0, 0, 0.12));
       border-radius: 12px;
       background: var(--color-kumo-base, #fff);
       padding: 24px;
@@ -137,7 +218,7 @@ const html = String.raw`<!doctype html>
     .bubble {
       width: fit-content;
       max-width: min(760px, 100%);
-      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border: 1px solid var(--color-kumo-hairline, rgba(0, 0, 0, 0.12));
       border-radius: 12px;
       background: var(--color-kumo-base, #fff);
       padding: 12px;
@@ -199,7 +280,7 @@ const html = String.raw`<!doctype html>
       overflow: auto;
       margin: 8px 0 0;
       padding: 10px;
-      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border: 1px solid var(--color-kumo-hairline, rgba(0, 0, 0, 0.12));
       border-radius: 8px;
       color: var(--text-color-kumo-default, #171717);
       background: var(--color-kumo-recessed, #f5f5f5);
@@ -220,7 +301,7 @@ const html = String.raw`<!doctype html>
       align-items: center;
       min-height: 30px;
       padding: 0 10px;
-      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border: 1px solid var(--color-kumo-hairline, rgba(0, 0, 0, 0.12));
       border-radius: 999px;
       color: var(--text-color-kumo-link, #93c5fd);
       background: var(--color-kumo-tint, #f5f5f5);
@@ -232,7 +313,7 @@ const html = String.raw`<!doctype html>
     .composer-wrap {
       position: sticky;
       bottom: 0;
-      border-top: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border-top: 1px solid var(--color-kumo-hairline, rgba(0, 0, 0, 0.12));
       background: var(--color-kumo-canvas, #fafafa);
       padding: 12px 18px;
     }
@@ -240,7 +321,7 @@ const html = String.raw`<!doctype html>
     .composer {
       width: min(100%, 960px);
       margin: 0 auto;
-      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border: 1px solid var(--color-kumo-hairline, rgba(0, 0, 0, 0.12));
       border-radius: 12px;
       background: var(--color-kumo-base, #fff);
       padding: 12px;
@@ -268,7 +349,7 @@ const html = String.raw`<!doctype html>
     .session-input {
       width: min(260px, 42vw);
       min-height: 30px;
-      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border: 1px solid var(--color-kumo-hairline, rgba(0, 0, 0, 0.12));
       border-radius: 8px;
       color: var(--text-color-kumo-default, #171717);
       background: var(--color-kumo-recessed, #f5f5f5);
@@ -311,6 +392,8 @@ const html = String.raw`<!doctype html>
     .send-button:disabled { cursor: wait; opacity: 0.6; }
 
     @media (max-width: 720px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--color-kumo-hairline, rgba(0, 0, 0, 0.12)); }
       .topbar-inner { padding-inline: 12px; }
       .chat-log { padding-inline: 12px; }
       .message, .message.user { grid-template-columns: 1fr; }
@@ -327,59 +410,72 @@ const html = String.raw`<!doctype html>
 </head>
 <body class="bg-kumo-canvas text-kumo-default">
   <div class="app-shell">
-    <header class="topbar">
-      <div class="topbar-inner">
-        <div class="brand" aria-label="Flue serverless coding agent demo">
-          <span class="brand-mark" aria-hidden="true"></span>
-          <div>
-            <p class="brand-title">Flue Serverless Coding Agent</p>
-            <p class="brand-subtitle">Cloudflare Workers, Durable Objects, AI Gateway, and @cloudflare/shell</p>
-          </div>
-        </div>
-        <span class="status-pill"><span class="status-dot" id="status-dot"></span><span id="status-text">Ready</span></span>
+    <aside class="sidebar" aria-label="Chat sessions">
+      <div class="sidebar-header">
+        <p class="sidebar-title">Chats</p>
+        <button class="new-chat-button" id="new-chat-button" type="button">New chat</button>
       </div>
-    </header>
+      <div class="chat-list" id="chat-list"></div>
+      <p class="sidebar-note">Each chat reuses one Durable Object instance id. Flue persists that chat session, workspace, and run logs inside Durable Object storage.</p>
+    </aside>
 
-    <main class="chat-log" id="chat-log" aria-live="polite">
-      <section class="empty-state" id="empty-state">
-        <div class="empty-card bg-kumo-base border-kumo-hairline">
-          <h1>What should the agent show?</h1>
-          <p>Ask the demo to prove it can inspect files, run terminal commands, write to its workspace, and return a structured outcome. The full work trace will appear here as the session runs.</p>
+    <div class="main-pane">
+      <header class="topbar">
+        <div class="topbar-inner">
+          <div class="brand" aria-label="Flue serverless coding agent demo">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <div>
+              <p class="brand-title">Flue Serverless Coding Agent</p>
+              <p class="brand-subtitle">Cloudflare Workers, Durable Objects, AI Gateway, and @cloudflare/shell</p>
+            </div>
+          </div>
+          <span class="status-pill"><span class="status-dot" id="status-dot"></span><span id="status-text">Ready</span></span>
         </div>
+      </header>
+
+      <main class="chat-log" id="chat-log" aria-live="polite"></main>
+
+      <section class="composer-wrap">
+        <form class="composer bg-kumo-base border-kumo-hairline" id="demo-form">
+          <div class="composer-top">
+            <span id="active-chat-label">Durable Object: loading...</span>
+            <span id="run-id">No run yet</span>
+          </div>
+          <div class="prompt-row">
+            <textarea id="message" name="message" aria-label="Prompt">Use the terminal to inspect this workspace and prove the serverless demo works. Show familiar commands like cat and grep, then write a short note to /tmp/demo-output.md and show it.</textarea>
+            <button class="send-button" id="run-button" type="submit">Run</button>
+          </div>
+        </form>
       </section>
-    </main>
-
-    <section class="composer-wrap">
-      <form class="composer bg-kumo-base border-kumo-hairline" id="demo-form">
-        <div class="composer-top">
-          <label class="session-field" for="session-id">
-            <span>Agent instance</span>
-            <input class="session-input" id="session-id" name="session-id" />
-          </label>
-          <span id="run-id">No run yet</span>
-        </div>
-        <div class="prompt-row">
-          <textarea id="message" name="message" aria-label="Prompt">Use the terminal to inspect this workspace and prove the serverless demo works. Show familiar commands like cat and grep, then write a short note to /tmp/demo-output.md and show it.</textarea>
-          <button class="send-button" id="run-button" type="submit">Run</button>
-        </div>
-      </form>
-    </section>
+    </div>
   </div>
 
   <script>
     const form = document.querySelector('#demo-form');
     const chatLog = document.querySelector('#chat-log');
-    const emptyState = document.querySelector('#empty-state');
     const message = document.querySelector('#message');
-    const sessionId = document.querySelector('#session-id');
     const button = document.querySelector('#run-button');
+    const newChatButton = document.querySelector('#new-chat-button');
+    const chatList = document.querySelector('#chat-list');
+    const activeChatLabel = document.querySelector('#active-chat-label');
     const runIdEl = document.querySelector('#run-id');
     const statusText = document.querySelector('#status-text');
     const statusDot = document.querySelector('#status-dot');
     const toolCards = new Map();
+    const storageKey = 'flue-demo-chats-v1';
+    let chats = loadChats();
+    let activeChatId = chats[0]?.id;
     let currentRunId = '';
 
-    sessionId.value = 'demo-' + Math.random().toString(36).slice(2, 9);
+    if (!activeChatId) {
+      const chat = newChatRecord();
+      chats = [chat];
+      activeChatId = chat.id;
+      saveChats();
+    }
+
+    renderChatList();
+    selectChat(activeChatId);
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -393,12 +489,19 @@ const html = String.raw`<!doctype html>
       }
     });
 
+    newChatButton.addEventListener('click', () => {
+      const chat = createChat();
+      selectChat(chat.id);
+    });
+
     async function runAgent() {
       const prompt = message.value.trim();
       if (!prompt) return;
 
-      const id = encodeURIComponent(sessionId.value.trim() || 'demo-session');
-      resetRun();
+      const chat = activeChat();
+      const id = encodeURIComponent(chat.id);
+      resetRunState();
+      removeEmptyState();
       appendUserMessage(prompt);
       message.value = '';
       setStatus('running', 'Agent running');
@@ -473,6 +576,10 @@ const html = String.raw`<!doctype html>
         return;
       }
 
+      handleEvent(event, prompt);
+    }
+
+    function handleEvent(event, prompt, options) {
       if (event.runId) {
         currentRunId = event.runId;
         setRunId(event.runId);
@@ -504,7 +611,7 @@ const html = String.raw`<!doctype html>
           appendWorkMessage('Operation complete', event.operationKind + ' in ' + event.durationMs + 'ms');
           break;
         case 'run_end':
-          handleRunEnd(event, prompt);
+          handleRunEnd(event, prompt, options);
           break;
         case 'log':
           appendWorkMessage('Log: ' + event.level, event.message);
@@ -512,24 +619,36 @@ const html = String.raw`<!doctype html>
       }
     }
 
-    function handleRunEnd(event, prompt) {
+    function handleRunEnd(event, prompt, options) {
       if (event.isError) {
-        setStatus('error', 'Run ended with an error');
+        if (!options?.replay) setStatus('error', 'Run ended with an error');
         appendWorkMessage('Run error', JSON.stringify(event.error, null, 2), { tone: 'error' });
         return;
       }
 
-      setStatus('done', 'Run complete');
+      if (!options?.replay) setStatus('done', 'Run complete');
       const result = event.result || {};
       appendFinalOutcome(result, prompt);
+      if (!options?.replay) recordRun(result, prompt);
     }
 
-    function resetRun() {
+    function resetRunState() {
       currentRunId = '';
       toolCards.clear();
-      emptyState?.remove();
-      chatLog.innerHTML = '';
       setRunId('Starting...');
+    }
+
+    function renderEmptyState(chat) {
+      chatLog.innerHTML = '';
+      const section = document.createElement('section');
+      section.className = 'empty-state';
+      section.innerHTML = '<div class="empty-card bg-kumo-base border-kumo-hairline"><h1>What should the agent show?</h1><p>Ask the demo to prove it can inspect files, run terminal commands, write to its workspace, and return a structured outcome. Reuse this chat to show that the same Durable Object session remembers previous turns.</p></div>';
+      chatLog.appendChild(section);
+      setRunId(chat.runs.at(-1)?.runId || 'No run yet');
+    }
+
+    function removeEmptyState() {
+      chatLog.querySelector('.empty-state')?.remove();
     }
 
     function appendUserMessage(text) {
@@ -601,6 +720,104 @@ const html = String.raw`<!doctype html>
       row.body.appendChild(runLinks(result.run || runLinksFor(currentRunId)));
       chatLog.appendChild(row.el);
       scrollToBottom();
+    }
+
+    function loadChats() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(storageKey) || '[]');
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function saveChats() {
+      localStorage.setItem(storageKey, JSON.stringify(chats));
+    }
+
+    function createChat() {
+      const chat = newChatRecord();
+      chats = [chat, ...chats];
+      saveChats();
+      renderChatList();
+      return chat;
+    }
+
+    function newChatRecord() {
+      const now = new Date().toISOString();
+      return { id: 'demo-' + Math.random().toString(36).slice(2, 9), title: 'New chat', runs: [], createdAt: now, updatedAt: now };
+    }
+
+    function activeChat() {
+      return chats.find((chat) => chat.id === activeChatId) || chats[0] || createChat();
+    }
+
+    function selectChat(id) {
+      activeChatId = id;
+      const chat = activeChat();
+      activeChatLabel.textContent = 'Durable Object: ' + chat.id;
+      currentRunId = chat.runs.at(-1)?.runId || '';
+      setStatus('', 'Ready');
+      renderChatList();
+      renderChat(chat);
+    }
+
+    async function renderChat(chat) {
+      toolCards.clear();
+      chatLog.innerHTML = '';
+      if (chat.runs.length === 0) {
+        renderEmptyState(chat);
+        return;
+      }
+      for (const run of chat.runs) {
+        appendUserMessage(run.message);
+        await renderStoredRun(run);
+      }
+      setRunId(chat.runs.at(-1)?.runId || 'No run yet');
+    }
+
+    async function renderStoredRun(run) {
+      try {
+        if (!run.eventsUrl) throw new Error('Missing events URL');
+        const response = await fetch(run.eventsUrl);
+        const { events } = await response.json();
+        toolCards.clear();
+        for (const event of events || []) handleEvent(event, run.message, { replay: true });
+      } catch {
+        appendWorkMessage('Saved run', 'Could not replay this run log. It may have been pruned from the server-side run history.');
+      }
+    }
+
+    function renderChatList() {
+      chatList.innerHTML = '';
+      for (const chat of chats) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'chat-item' + (chat.id === activeChatId ? ' active' : '');
+        item.innerHTML = '<span class="chat-item-title"></span><span class="chat-item-meta"></span>';
+        item.querySelector('.chat-item-title').textContent = chat.title;
+        item.querySelector('.chat-item-meta').textContent = chat.runs.length + ' run' + (chat.runs.length === 1 ? '' : 's') + ' · ' + chat.id;
+        item.addEventListener('click', () => selectChat(chat.id));
+        chatList.appendChild(item);
+      }
+    }
+
+    function recordRun(result, prompt) {
+      const chat = activeChat();
+      const run = result.run || runLinksFor(result.runId || currentRunId);
+      const savedRun = {
+        runId: result.runId || currentRunId,
+        message: prompt,
+        eventsUrl: run?.eventsUrl,
+        streamUrl: run?.streamUrl,
+        createdAt: new Date().toISOString(),
+      };
+      chat.runs.push(savedRun);
+      if (chat.title === 'New chat') chat.title = prompt.slice(0, 48) + (prompt.length > 48 ? '...' : '');
+      chat.updatedAt = savedRun.createdAt;
+      chats = [chat, ...chats.filter((item) => item.id !== chat.id)];
+      saveChats();
+      renderChatList();
     }
 
     function detailList(title, items) {

@@ -17,11 +17,6 @@ const files: Record<string, string> = {
 };
 
 export async function seedDemoWorkspace(workspace: Workspace) {
-  const staleAgents = await workspace.readFile('/workspace/AGENTS.md').catch(() => null);
-  if (staleAgents?.includes('terminal-first Cloudflare serverless agent demo')) {
-    await workspace.rm('/workspace/AGENTS.md', { force: true });
-  }
-
   if (await workspace.exists(seedMarker)) return;
 
   await workspace.mkdir('/workspace', { recursive: true });
