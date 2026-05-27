@@ -18,7 +18,7 @@ const files: Record<string, string> = {
     '# Serverless Agent Harness',
     '',
     'This demo runs a Flue harness on Cloudflare Workers and Durable Objects.',
-    'Terminal commands are interpreted by just-bash and operate through Flue 0.8-compatible @cloudflare/shell Workspace plumbing.',
+    'The code tool runs JavaScript against a durable @cloudflare/shell Workspace through a Worker Loader binding.',
     'No container sandbox is required for this demonstration.',
     '',
   ].join('\n'),

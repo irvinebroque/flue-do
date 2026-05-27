@@ -1,7 +1,6 @@
 import { createAgent } from '@flue/runtime';
-import { getDefaultWorkspace } from '@flue/runtime/cloudflare';
 import type { MiddlewareHandler } from 'hono';
-import { cloudflareTerminalSandbox } from '../lib/cloudflare-terminal';
+import { getDefaultWorkspace, getShellSandbox } from '../connectors/cloudflare-shell';
 import { seedDemoWorkspace } from '../lib/demo-workspace';
 
 /** Model id passed to Flue for the hosted coding-agent session. */
@@ -16,8 +15,8 @@ export const route: MiddlewareHandler = async (_c, next) => {
  * Flue 0.8 agent definition for the serverless coding demo.
  *
  * Each HTTP id maps to a Durable Object-backed Flue session. The agent uses a
- * durable @cloudflare/shell Workspace, exposed through this demo's `bash` tool
- * so the model keeps the broad just-bash command set.
+ * durable @cloudflare/shell Workspace exposed through a Worker Loader-backed
+ * `code` tool.
  */
 export default createAgent(async ({ env }) => {
   const workspace = getDefaultWorkspace();
@@ -25,11 +24,12 @@ export default createAgent(async ({ env }) => {
 
   return {
     model,
-    sandbox: cloudflareTerminalSandbox({ workspace, loader: env.LOADER, cwd: '/workspace' }),
+    sandbox: getShellSandbox({ workspace, loader: env.LOADER }),
     instructions: [
       'You are running inside the Flue serverless coding demo on Cloudflare Workers and Durable Objects.',
-      'Use the bash tool to inspect and modify the durable workspace when the user asks for terminal work.',
-      'When you finish, summarize the commands you ran, files you inspected, and files you changed.',
+      'Use the code tool and its state API to inspect and modify the durable workspace.',
+      'Prefer files under /workspace for this demo.',
+      'When you finish, summarize the JavaScript actions you ran, files you inspected, and files you changed.',
     ].join('\n'),
   };
 });

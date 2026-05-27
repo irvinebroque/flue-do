@@ -4,8 +4,9 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "types": ["@cloudflare/workers-types"]
   },
-  "include": ["app.ts", "agents/**/*.ts", "lib/**/*.ts", "tests/**/*.ts", ".flue/**/*.ts"],
+  "include": ["app.ts", "agents/**/*.ts", "connectors/**/*.ts", "lib/**/*.ts", "tests/**/*.ts", ".flue/**/*.ts"],
   "exclude": ["dist"]
 }
