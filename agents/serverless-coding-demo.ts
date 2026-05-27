@@ -4,11 +4,21 @@ import * as v from 'valibot';
 import { cloudflareTerminalSandbox } from '../lib/cloudflare-terminal';
 import { seedDemoWorkspace } from '../lib/demo-workspace';
 
+/** Enable Flue's HTTP webhook route for this agent module. */
 export const triggers = { webhook: true };
 
+/** Model id passed to Flue for the hosted coding-agent session. */
 const model = 'cloudflare/openai/gpt-5.5';
+
+/** AI Gateway name used by the configured Cloudflare account. */
 const gateway = 'default';
 
+/**
+ * Structured result contract requested from the model.
+ *
+ * The browser UI renders these fields as the final outcome, while tests and demo
+ * users can still inspect the raw run events for the full tool trace.
+ */
 const result = v.object({
   summary: v.string(),
   terminalCommands: v.array(v.string()),
@@ -20,10 +30,17 @@ type DemoPayload = {
   message?: unknown;
 };
 
+/** Returns a non-empty string payload value, or the demo's default prompt. */
 function text(value: unknown, fallback: string) {
   return typeof value === 'string' && value.trim().length > 0 ? value : fallback;
 }
 
+/**
+ * Builds links to Flue's run inspection endpoints relative to the incoming request.
+ *
+ * These URLs are included in the agent response so the browser can persist links
+ * to the event log and replay stream for each saved chat run.
+ */
 function runInspectionUrls(runId: string, req: Request | undefined) {
   const path = `/runs/${encodeURIComponent(runId)}`;
   const origin = req ? new URL(req.url).origin : '';
@@ -35,6 +52,14 @@ function runInspectionUrls(runId: string, req: Request | undefined) {
   };
 }
 
+/**
+ * Flue agent entrypoint for the serverless coding demo.
+ *
+ * Each HTTP id maps to a Durable Object-backed Flue context. The handler seeds a
+ * durable @cloudflare/shell Workspace, exposes it as a `bash` tool through the
+ * just-bash adapter, and asks the model to return a small structured summary of
+ * the commands and files it touched.
+ */
 export default async function (ctx: FlueContext) {
   const { init, id, payload, env, req, runId } = ctx;
   const input = payload as DemoPayload;

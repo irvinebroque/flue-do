@@ -1,7 +1,15 @@
 import { flue, type Fetchable } from '@flue/runtime/app';
 
+/** Flue's Worker fetch handler for agent routes, run streams, and event logs. */
 const flueApp = flue();
 
+/**
+ * Browser UI served from the Worker root route.
+ *
+ * The UI is intentionally dependency-free so the demo can show the complete
+ * client/server flow in one file: users submit prompts, the browser streams Flue
+ * run events, and chat ids in localStorage map back to durable agent instances.
+ */
 const html = String.raw`<!doctype html>
 <html lang="en" data-mode="light">
 <head>
@@ -494,6 +502,7 @@ const html = String.raw`<!doctype html>
       selectChat(chat.id);
     });
 
+    /** Starts one streamed Flue agent run for the active Durable Object chat id. */
     async function runAgent() {
       const prompt = message.value.trim();
       if (!prompt) return;
@@ -533,6 +542,7 @@ const html = String.raw`<!doctype html>
       }
     }
 
+    /** Reads Server-Sent Event frames from the streaming agent response. */
     async function readSse(body, onFrame) {
       const reader = body.getReader();
       const decoder = new TextDecoder();
@@ -553,6 +563,7 @@ const html = String.raw`<!doctype html>
       }
     }
 
+    /** Parses one SSE frame into event/id/data fields used by Flue run events. */
     function parseSseFrame(raw) {
       if (!raw.trim() || raw.startsWith(':')) return null;
       const frame = { event: 'message', id: '', data: '' };
@@ -567,6 +578,7 @@ const html = String.raw`<!doctype html>
       return frame;
     }
 
+    /** Decodes an SSE frame and forwards JSON run events to the renderer. */
     function handleFrame(frame, prompt) {
       let event;
       try {
@@ -579,6 +591,7 @@ const html = String.raw`<!doctype html>
       handleEvent(event, prompt);
     }
 
+    /** Routes Flue run events to the appropriate visible chat-log component. */
     function handleEvent(event, prompt, options) {
       if (event.runId) {
         currentRunId = event.runId;
@@ -619,6 +632,7 @@ const html = String.raw`<!doctype html>
       }
     }
 
+    /** Finalizes the UI and local chat history when a run completes or fails. */
     function handleRunEnd(event, prompt, options) {
       if (event.isError) {
         if (!options?.replay) setStatus('error', 'Run ended with an error');
@@ -638,6 +652,7 @@ const html = String.raw`<!doctype html>
       setRunId('Starting...');
     }
 
+    /** Shows onboarding copy for a chat that has no recorded runs yet. */
     function renderEmptyState(chat) {
       chatLog.innerHTML = '';
       const section = document.createElement('section');
@@ -680,6 +695,7 @@ const html = String.raw`<!doctype html>
       return row;
     }
 
+    /** Creates a card for a tool call before its result arrives. */
     function appendToolStart(event) {
       const command = commandFromEvent(event);
       const title = event.toolName === 'bash' && command ? 'Terminal command' : 'Tool call: ' + event.toolName;
@@ -689,6 +705,7 @@ const html = String.raw`<!doctype html>
       toolCards.set(event.toolCallId, row);
     }
 
+    /** Adds the output for a previously started tool call. */
     function appendToolResult(event) {
       const row = toolCards.get(event.toolCallId) || appendWorkMessage('Tool result: ' + event.toolName, '');
       const result = toolResultText(event) || (event.isError ? 'Tool failed.' : 'Tool completed.');
@@ -701,6 +718,7 @@ const html = String.raw`<!doctype html>
       scrollToBottom();
     }
 
+    /** Renders the model's structured result and links to Flue run inspection URLs. */
     function appendFinalOutcome(result, prompt) {
       const row = createMessage('assistant', 'Final outcome', { final: true });
       const data = result.data || result;
@@ -722,6 +740,7 @@ const html = String.raw`<!doctype html>
       scrollToBottom();
     }
 
+    /** Loads the local chat index; authoritative run data remains server-side. */
     function loadChats() {
       try {
         const parsed = JSON.parse(localStorage.getItem(storageKey) || '[]');
@@ -735,6 +754,7 @@ const html = String.raw`<!doctype html>
       localStorage.setItem(storageKey, JSON.stringify(chats));
     }
 
+    /** Creates a new local chat id, which maps to a new Durable Object instance. */
     function createChat() {
       const chat = newChatRecord();
       chats = [chat, ...chats];
@@ -743,6 +763,7 @@ const html = String.raw`<!doctype html>
       return chat;
     }
 
+    /** Builds the local metadata record for one Durable Object-backed chat. */
     function newChatRecord() {
       const now = new Date().toISOString();
       return { id: 'demo-' + Math.random().toString(36).slice(2, 9), title: 'New chat', runs: [], createdAt: now, updatedAt: now };
@@ -752,6 +773,7 @@ const html = String.raw`<!doctype html>
       return chats.find((chat) => chat.id === activeChatId) || chats[0] || createChat();
     }
 
+    /** Switches the UI to a chat and replays stored Flue run events when possible. */
     function selectChat(id) {
       activeChatId = id;
       const chat = activeChat();
@@ -776,6 +798,7 @@ const html = String.raw`<!doctype html>
       setRunId(chat.runs.at(-1)?.runId || 'No run yet');
     }
 
+    /** Replays a saved run from Flue's event-log endpoint instead of duplicating UI state. */
     async function renderStoredRun(run) {
       try {
         if (!run.eventsUrl) throw new Error('Missing events URL');
@@ -802,6 +825,7 @@ const html = String.raw`<!doctype html>
       }
     }
 
+    /** Stores enough local metadata to return to a server-side run later. */
     function recordRun(result, prompt) {
       const chat = activeChat();
       const run = result.run || runLinksFor(result.runId || currentRunId);
@@ -878,6 +902,7 @@ const html = String.raw`<!doctype html>
       return wrapper;
     }
 
+    /** Builds relative run-inspection links when the agent response did not include them. */
     function runLinksFor(runId) {
       if (!runId) return null;
       const path = '/runs/' + encodeURIComponent(runId);
@@ -924,6 +949,7 @@ const html = String.raw`<!doctype html>
 </html>`;
 
 export default {
+  /** Serves the demo UI at `/` and delegates all Flue routes to the runtime app. */
   fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/') {

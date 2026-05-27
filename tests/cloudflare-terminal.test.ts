@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createWorkspaceBash } from '../lib/cloudflare-terminal';
 
+/** In-memory equivalent of the Workspace entries needed by the terminal tests. */
 type Entry =
   | { type: 'file'; content: string | Uint8Array; mtime: Date }
   | { type: 'directory'; mtime: Date }
@@ -26,6 +27,12 @@ function nameOf(path: string) {
   return normalize(path).split('/').pop() || '/';
 }
 
+/**
+ * Minimal @cloudflare/shell Workspace test double.
+ *
+ * The adapter is intentionally tested without Cloudflare storage so command
+ * semantics can be verified quickly and deterministically in Vitest.
+ */
 class MockWorkspace {
   entries = new Map<string, Entry>();
 
@@ -161,6 +168,7 @@ class MockWorkspace {
   }
 }
 
+/** Creates a bash runner rooted at /workspace for concise command assertions. */
 async function createRunner(files: Record<string, string>) {
   const workspace = new MockWorkspace(files);
   const bash = await createWorkspaceBash(workspace, '/workspace');

@@ -2,6 +2,7 @@ import type { Workspace } from '@cloudflare/shell';
 import { createTools, type FileStat, type SandboxFactory, type SessionEnv, type ShellResult } from '@flue/runtime';
 import { Bash, defineCommand, type CommandContext, type CommandName, type CpOptions, type FileContent, type FsStat, type IFileSystem, type MkdirOptions, type RmOptions } from 'just-bash/browser';
 
+/** Directory entry shape returned by @cloudflare/shell Workspace APIs. */
 type WorkspaceEntry = {
   path: string;
   name: string;
@@ -11,6 +12,13 @@ type WorkspaceEntry = {
   mtime?: Date;
 };
 
+/**
+ * Narrow Workspace surface used by the just-bash adapter.
+ *
+ * Tests supply a small in-memory implementation of this shape, while production
+ * uses @cloudflare/shell. Optional methods are used when available to keep path
+ * tracking accurate without requiring private APIs from every Workspace object.
+ */
 type WorkspaceLike = Pick<Workspace,
   | 'appendFile'
   | 'cp'
@@ -31,12 +39,22 @@ type WorkspaceLike = Pick<Workspace,
   lstat?: (path: string) => Promise<WorkspaceEntry | null>;
 };
 
+/** Options for exposing a Workspace as a Flue sandbox factory. */
 type CloudflareTerminalOptions = {
   workspace: Workspace;
+  /** Currently passed through from the Worker binding to document the sandbox boundary. */
   loader: unknown;
+  /** Working directory seen by the agent's terminal commands. */
   cwd?: string;
 };
 
+/**
+ * Shell commands intentionally exposed to the agent.
+ *
+ * just-bash can emulate more shell behavior than the demo needs. Keeping this
+ * allow-list explicit makes the available terminal surface clear and avoids
+ * accidentally presenting unsupported or surprising commands to the model.
+ */
 const allowedCommands: CommandName[] = [
   'base64', 'basename', 'cat', 'chmod', 'clear', 'cp', 'cut', 'date', 'diff',
   'dirname', 'du', 'echo', 'env', 'egrep', 'false', 'fgrep', 'file', 'find',
@@ -46,6 +64,7 @@ const allowedCommands: CommandName[] = [
   'touch', 'tree', 'true', 'uniq', 'wc', 'which', 'whoami',
 ];
 
+/** Normalizes POSIX-style paths for the virtual Workspace filesystem. */
 function normalize(path: string) {
   const parts: string[] = [];
   for (const part of path.split('/')) {
@@ -56,26 +75,31 @@ function normalize(path: string) {
   return `/${parts.join('/')}`;
 }
 
+/** Returns the normalized parent directory for a path. */
 function parentOf(path: string) {
   const normalized = normalize(path);
   const index = normalized.lastIndexOf('/');
   return index <= 0 ? '/' : normalized.slice(0, index);
 }
 
+/** Returns the basename for a normalized path. */
 function nameOf(path: string) {
   return normalize(path).split('/').pop() || '/';
 }
 
+/** Converts a binary string into byte values matching Node's latin1 behavior. */
 function bytesFromLatin1(value: string) {
   const bytes = new Uint8Array(value.length);
   for (let i = 0; i < value.length; i++) bytes[i] = value.charCodeAt(i) & 0xff;
   return bytes;
 }
 
+/** Decodes Workspace bytes as UTF-8 text for text-oriented shell tools. */
 function textFromBytes(value: Uint8Array) {
   return new TextDecoder().decode(value);
 }
 
+/** Encodes just-bash file content into the representation expected by Workspace. */
 function encodeContent(content: FileContent, options?: unknown) {
   if (content instanceof Uint8Array) return content;
   if (options === 'binary' || (typeof options === 'object' && options && (options as { encoding?: unknown }).encoding === 'binary')) {
@@ -96,6 +120,7 @@ function eexist(path: string) {
   return new Error(`EEXIST: file already exists, ${path}`);
 }
 
+/** Converts Workspace stat metadata into the FsStat shape expected by just-bash. */
 function statFrom(entry: WorkspaceEntry): FsStat {
   return {
     isFile: entry.type === 'file',
@@ -107,6 +132,7 @@ function statFrom(entry: WorkspaceEntry): FsStat {
   };
 }
 
+/** Parses the subset of grep/rg options that the demo terminal needs. */
 function parseGrepArgs(commandName: string, args: string[]) {
   const flags = new Set(commandName === 'rg' ? ['R', 'n'] : []);
   const positional: string[] = [];
@@ -129,6 +155,7 @@ function parseGrepArgs(commandName: string, args: string[]) {
   };
 }
 
+/** Implements fixed-string and simple regex matching for grep-like commands. */
 function grepMatches(line: string, pattern: string, flags: Set<string>, fixed: boolean) {
   if (fixed) {
     const haystack = flags.has('i') ? line.toLowerCase() : line;
@@ -144,6 +171,7 @@ function grepMatches(line: string, pattern: string, flags: Set<string>, fixed: b
   return haystack.includes(needle);
 }
 
+/** Expands grep targets into readable files, recursing when -r/-R is present. */
 async function grepFiles(ctx: CommandContext, path: string, recursive: boolean): Promise<string[]> {
   const resolved = ctx.fs.resolvePath(ctx.cwd, path);
   const stat = await ctx.fs.stat(resolved);
@@ -157,6 +185,13 @@ async function grepFiles(ctx: CommandContext, path: string, recursive: boolean):
   return files;
 }
 
+/**
+ * Creates grep-family commands with output close enough to common terminal usage.
+ *
+ * just-bash does not provide every grep behavior used by coding agents, so the
+ * demo supplies a small implementation for recursive searches, line numbers, and
+ * grep/egrep/fgrep/rg aliases.
+ */
 function createGrepCommand(name: 'grep' | 'egrep' | 'fgrep' | 'rg') {
   return defineCommand(name, async (args, ctx) => {
     const { flags, pattern, targets } = parseGrepArgs(name, args);
@@ -189,15 +224,25 @@ function createGrepCommand(name: 'grep' | 'egrep' | 'fgrep' | 'rg') {
   });
 }
 
+/** Placeholder adapter for Flue stat values in case the runtime type diverges. */
 function adaptFlueStat(stat: Awaited<ReturnType<SessionEnv['stat']>>): FileStat {
   return stat;
 }
 
+/**
+ * just-bash filesystem implementation backed by a durable @cloudflare/shell Workspace.
+ *
+ * Flue tools expect terminal-like filesystem semantics, but the durable Workspace
+ * API exposes storage operations directly. This class bridges the two by
+ * normalizing paths, translating stat values, maintaining a known path index for
+ * shell globbing/tree operations, and forwarding reads/writes to the Workspace.
+ */
 export class WorkspaceBackedFileSystem implements IFileSystem {
   private knownPaths = new Set<string>(['/']);
 
   constructor(private workspace: WorkspaceLike) {}
 
+  /** Rebuilds the known path index used by shell commands that enumerate files. */
   async refresh(): Promise<void> {
     this.knownPaths = new Set<string>(['/']);
     if (this.workspace._getAllPaths) {
@@ -208,6 +253,7 @@ export class WorkspaceBackedFileSystem implements IFileSystem {
     await this.refreshDir('/');
   }
 
+  /** Reads a UTF-8 text file from the Workspace. */
   async readFile(path: string): Promise<string> {
     const resolved = normalize(path);
     const content = await this.workspace.readFile(resolved);
@@ -215,6 +261,7 @@ export class WorkspaceBackedFileSystem implements IFileSystem {
     return content;
   }
 
+  /** Reads raw file bytes from the Workspace. */
   async readFileBuffer(path: string): Promise<Uint8Array> {
     const resolved = normalize(path);
     const content = await this.workspace.readFileBytes(resolved);
@@ -222,6 +269,7 @@ export class WorkspaceBackedFileSystem implements IFileSystem {
     return content;
   }
 
+  /** Writes text or binary content, creating parent directories like a shell redirection. */
   async writeFile(path: string, content: FileContent, options?: unknown): Promise<void> {
     const resolved = normalize(path);
     await this.workspace.mkdir(parentOf(resolved), { recursive: true });
@@ -231,6 +279,7 @@ export class WorkspaceBackedFileSystem implements IFileSystem {
     this.track(resolved);
   }
 
+  /** Appends text or binary content while preserving existing Workspace bytes. */
   async appendFile(path: string, content: FileContent, options?: unknown): Promise<void> {
     const resolved = normalize(path);
     await this.workspace.mkdir(parentOf(resolved), { recursive: true });
@@ -309,6 +358,7 @@ export class WorkspaceBackedFileSystem implements IFileSystem {
     return normalize(`${base.replace(/\/$/, '')}/${path}`);
   }
 
+  /** Returns all paths currently known to the shell filesystem adapter. */
   getAllPaths(): string[] {
     return [...this.knownPaths].sort();
   }
@@ -341,6 +391,7 @@ export class WorkspaceBackedFileSystem implements IFileSystem {
     if (!await this.exists(path)) throw enoent(path);
   }
 
+  /** Reads and tracks direct children for a directory. */
   private async readEntries(path: string): Promise<WorkspaceEntry[]> {
     const resolved = normalize(path);
     const stat = await this.workspace.stat(resolved);
@@ -351,6 +402,7 @@ export class WorkspaceBackedFileSystem implements IFileSystem {
     return entries as WorkspaceEntry[];
   }
 
+  /** Recursively discovers Workspace paths when a bulk path listing is unavailable. */
   private async refreshDir(path: string): Promise<void> {
     if (!await this.workspace.exists(path)) return;
     this.track(path);
@@ -362,12 +414,14 @@ export class WorkspaceBackedFileSystem implements IFileSystem {
     }
   }
 
+  /** Records a path and its parents so just-bash can enumerate virtual files. */
   private track(path: string): void {
     const resolved = normalize(path);
     this.knownPaths.add(resolved);
     this.addParents(resolved);
   }
 
+  /** Ensures parent directories are represented in the known path index. */
   private addParents(path: string): void {
     let current = parentOf(path);
     while (current && !this.knownPaths.has(current)) {
@@ -378,6 +432,12 @@ export class WorkspaceBackedFileSystem implements IFileSystem {
   }
 }
 
+/**
+ * Creates a just-bash interpreter wired to the provided Workspace.
+ *
+ * This is exported separately from the Flue sandbox so tests can exercise command
+ * behavior directly without initializing a full agent run.
+ */
 export async function createWorkspaceBash(workspace: WorkspaceLike, cwd = '/') {
   const fs = new WorkspaceBackedFileSystem(workspace);
   await fs.refresh();
@@ -397,6 +457,13 @@ export async function createWorkspaceBash(workspace: WorkspaceLike, cwd = '/') {
   });
 }
 
+/**
+ * Presents the durable Workspace terminal as a Flue SandboxFactory.
+ *
+ * Flue consumes a small SessionEnv with exec and filesystem methods. The returned
+ * factory creates that environment on demand and exposes only the `bash` tool so
+ * the agent interacts with this serverless terminal rather than a container.
+ */
 export function cloudflareTerminalSandbox({ workspace, cwd = '/' }: CloudflareTerminalOptions): SandboxFactory {
   const normalizedCwd = normalize(cwd);
 
