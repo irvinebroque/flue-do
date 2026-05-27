@@ -1,0 +1,14 @@
+{
+  "$schema": "https://workers.cloudflare.com/schema/wrangler.json",
+  "name": "flue-serverless-coding-demo",
+  "compatibility_date": "2026-04-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "worker_loaders": [{ "binding": "LOADER" }]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "flue-serverless-coding-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "flue dev --target cloudflare",
+    "build": "flue build --target cloudflare",
+    "deploy": "flue build --target cloudflare && wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/codemode": "^0.3.7",
+    "@cloudflare/shell": "^0.3.8",
+    "@flue/runtime": "^0.7.1",
+    "agents": "^0.13.3",
+    "valibot": "^1.4.1"
+  },
+  "devDependencies": {
+    "@flue/cli": "^0.7.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6",
+    "wrangler": "^4.95.0"
+  }
+}
