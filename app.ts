@@ -450,7 +450,7 @@ const html = String.raw`<!doctype html>
             <span id="run-id">No run yet</span>
           </div>
           <div class="prompt-row">
-            <textarea id="message" name="message" aria-label="Prompt">Use the terminal to inspect this workspace and prove the serverless demo works. Show familiar commands like cat and grep, then write a short note to /tmp/demo-output.md and show it.</textarea>
+            <textarea id="message" name="message" aria-label="Prompt">Use the code tool to inspect /workspace and prove the serverless demo works. Read a few files, write a short note to /tmp/demo-output.md, then return what you found.</textarea>
             <button class="send-button" id="run-button" type="submit">Run</button>
           </div>
         </form>
@@ -657,7 +657,7 @@ const html = String.raw`<!doctype html>
       chatLog.innerHTML = '';
       const section = document.createElement('section');
       section.className = 'empty-state';
-      section.innerHTML = '<div class="empty-card bg-kumo-base border-kumo-hairline"><h1>What should the agent show?</h1><p>Ask the demo to prove it can inspect files, run terminal commands, write to its workspace, and return a structured outcome. Reuse this chat to show that the same Durable Object session remembers previous turns.</p></div>';
+      section.innerHTML = '<div class="empty-card bg-kumo-base border-kumo-hairline"><h1>What should the agent show?</h1><p>Ask the demo to prove it can inspect files, run JavaScript against its workspace, write changes, and return a structured outcome. Reuse this chat to show that the same Durable Object session remembers previous turns.</p></div>';
       chatLog.appendChild(section);
       setRunId(chat.runs.at(-1)?.runId || 'No run yet');
     }
@@ -697,10 +697,10 @@ const html = String.raw`<!doctype html>
 
     /** Creates a card for a tool call before its result arrives. */
     function appendToolStart(event) {
-      const command = commandFromEvent(event);
-      const title = event.toolName === 'bash' && command ? 'Terminal command' : 'Tool call: ' + event.toolName;
+      const code = codeFromEvent(event);
+      const title = event.toolName === 'code' && code ? 'Code execution' : 'Tool call: ' + event.toolName;
       const row = appendWorkMessage(title, '');
-      if (command) row.body.appendChild(pre('$ ' + command, 'bash'));
+      if (code) row.body.appendChild(pre(code, 'javascript'));
       else row.body.appendChild(pre(JSON.stringify(event.args || {}, null, 2), 'json'));
       toolCards.set(event.toolCallId, row);
     }
@@ -711,7 +711,7 @@ const html = String.raw`<!doctype html>
       const result = toolResultText(event) || (event.isError ? 'Tool failed.' : 'Tool completed.');
       const label = document.createElement('div');
       label.className = 'message-label';
-      label.textContent = (event.toolName === 'bash' ? 'Command ' : 'Result ') + (event.isError ? 'failed' : 'completed') + ' in ' + event.durationMs + 'ms';
+      label.textContent = (event.toolName === 'code' ? 'Execution ' : 'Result ') + (event.isError ? 'failed' : 'completed') + ' in ' + event.durationMs + 'ms';
       row.body.appendChild(label);
       row.body.appendChild(pre(result, 'text'));
       if (event.isError) row.bubble.style.borderColor = 'rgba(251, 113, 133, 0.45)';
@@ -729,7 +729,7 @@ const html = String.raw`<!doctype html>
 
       const grid = document.createElement('div');
       grid.className = 'outcome-grid';
-      grid.appendChild(detailList('Terminal commands', data.terminalCommands));
+      grid.appendChild(detailList('Code actions', data.codeActions));
       grid.appendChild(detailList('Files inspected', data.filesInspected));
       grid.appendChild(detailList('Files changed', data.filesChanged));
       row.body.appendChild(grid);
@@ -913,8 +913,8 @@ const html = String.raw`<!doctype html>
       };
     }
 
-    function commandFromEvent(event) {
-      return event.args && typeof event.args.command === 'string' ? event.args.command : '';
+    function codeFromEvent(event) {
+      return event.args && typeof event.args.code === 'string' ? event.args.code : '';
     }
 
     function toolResultText(event) {

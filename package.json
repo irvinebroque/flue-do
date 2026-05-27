@@ -11,14 +11,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cloudflare/codemode": "^0.3.8",
     "@cloudflare/shell": "^0.3.8",
-    "@flue/runtime": "0.8.0-beta.6",
+    "@flue/runtime": "^0.8.0",
     "agents": "^0.13.3",
-    "just-bash": "^3.0.1",
     "valibot": "^1.4.1"
   },
   "devDependencies": {
-    "@flue/cli": "0.8.0-beta.6",
+    "@flue/cli": "^0.8.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6",
     "wrangler": "^4.95.0"

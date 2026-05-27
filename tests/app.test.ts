@@ -13,7 +13,7 @@ describe('demo web app', () => {
     expect(body).toContain('What should the agent show?');
     expect(body).toContain('/agents/serverless-coding-demo/');
     expect(body).toContain("accept: 'text/event-stream'");
-    expect(body).toContain('Terminal command');
+    expect(body).toContain('Code execution');
     expect(body).toContain('Final outcome');
     expect(body).not.toContain('Serverless coding agent trace');
   });

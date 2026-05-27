@@ -6,9 +6,9 @@ The important pieces are:
 
 - **Durable Objects as the agent runtime.** Each chat id maps to one Durable Object instance. That DO is where the agent handler runs and where Flue persists session state.
 - **Flue as the agent harness.** Flue owns the programmable TypeScript harness, sessions, tools, run events, and HTTP endpoints. Flue is built on Pi, so the same idea could be applied to other harnesses such as Pi directly, Codex, or another agent runtime.
-- **A terminal-like workspace without containers.** The agent gets a `bash` tool. `just-bash` provides the broad command surface, while Flue 0.8 and `@cloudflare/shell` provide the durable Workspace filesystem backed by Cloudflare storage.
+- **A durable workspace without containers.** The agent gets a `code` tool that runs JavaScript against `@cloudflare/shell` Workspace state through a Worker Loader binding.
 
-The web UI is intentionally small: enter a prompt, watch the agent use terminal commands like `cat` and `grep`, and see the final outcome. The sidebar keeps a local list of chat ids so you can return to the same Durable Object-backed session.
+The web UI is intentionally small: enter a prompt, watch the agent inspect and update workspace files with the `code` tool, and see the final outcome. The sidebar keeps a local list of chat ids so you can return to the same Durable Object-backed session.
 
 ## Setup
 
@@ -45,7 +45,7 @@ You can also call the agent directly:
 ```bash
 curl http://localhost:3583/agents/serverless-coding-demo/demo-session-1 \
   -H "Content-Type: application/json" \
-  -d '{"message":"Use the terminal to inspect this workspace and prove the serverless demo works. Show familiar commands like cat and grep, then write a short note to /tmp/demo-output.md and show it."}'
+  -d '{"message":"Use the code tool to inspect /workspace and prove the serverless demo works. Read a few files, write a short note to /tmp/demo-output.md, then return what you found."}'
 ```
 
 Reuse the same URL id, for example `demo-session-1`, to hit the same Durable Object-backed agent session again.
@@ -61,7 +61,7 @@ npm run deploy
 ## Files
 
 - `agents/serverless-coding-demo.ts` - Flue HTTP agent endpoint.
-- `lib/cloudflare-terminal.ts` - Thin adapter that keeps Flue's `bash` tool on top of `just-bash` while using `@cloudflare/shell`'s Workspace filesystem adapter.
+- `connectors/cloudflare-shell.ts` - Connector that exposes the durable `@cloudflare/shell` Workspace through Flue's Worker Loader-backed `code` tool.
 - `lib/demo-workspace.ts` - Seeds the demo Workspace files.
 - `app.ts` - Small chat UI and Flue route delegation.
 - `wrangler.jsonc` - Cloudflare Worker bindings.
