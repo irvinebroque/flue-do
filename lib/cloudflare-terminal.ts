@@ -1,7 +1,7 @@
 import { DynamicWorkerExecutor, resolveProvider } from '@cloudflare/codemode';
 import { WorkspaceFileSystem, type Workspace } from '@cloudflare/shell';
 import { stateTools } from '@cloudflare/shell/workers';
-import type { FileStat, SandboxFactory, SessionEnv, ShellResult } from '@flue/runtime';
+import { createTools, type FileStat, type SandboxFactory, type SessionEnv, type ShellResult } from '@flue/runtime';
 
 type CloudflareTerminalOptions = {
   workspace: Workspace;
@@ -70,6 +70,11 @@ function splitPipes(command) {
       current += ch;
       continue;
     }
+    if (ch === '|' && command[i + 1] === '|') {
+      current += '||';
+      i++;
+      continue;
+    }
     if (ch === '|') {
       parts.push(current.trim());
       current = '';
@@ -79,6 +84,100 @@ function splitPipes(command) {
   }
   parts.push(current.trim());
   return parts.filter(Boolean);
+}
+
+function heredocDelimiterFrom(line) {
+  return line.match(/<<-?['"]?(\w+)['"]?/)?.[1];
+}
+
+function insideForBlock(command) {
+  const trimmed = command.trim();
+  return /^for\s+\w+\s+in\s+/s.test(trimmed) && !/\bdone\s*$/s.test(trimmed);
+}
+
+function splitCommands(command) {
+  const commands = [];
+  let current = '';
+  let currentLine = '';
+  let quote = '';
+  let heredocDelimiter = '';
+
+  const flush = (next) => {
+    const trimmed = current.trim();
+    if (trimmed) commands.push({ command: trimmed, next });
+    current = '';
+    currentLine = '';
+  };
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+
+    if (quote) {
+      current += ch;
+      currentLine += ch;
+      if (ch === quote && command[i - 1] !== '\\') quote = '';
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      currentLine += ch;
+      continue;
+    }
+
+    if (ch === '\n') {
+      const line = currentLine;
+      current += ch;
+      if (heredocDelimiter) {
+        if (line.trim() === heredocDelimiter) {
+          heredocDelimiter = '';
+          flush(';');
+        } else {
+          currentLine = '';
+        }
+        continue;
+      }
+
+      const marker = heredocDelimiterFrom(line);
+      if (marker) {
+        heredocDelimiter = marker;
+        currentLine = '';
+        continue;
+      }
+
+      if (insideForBlock(current)) {
+        currentLine = '';
+        continue;
+      }
+
+      flush(';');
+      continue;
+    }
+
+    if (!heredocDelimiter && !insideForBlock(current)) {
+      if (ch === '&' && command[i + 1] === '&') {
+        flush('&&');
+        i++;
+        continue;
+      }
+      if (ch === '|' && command[i + 1] === '|') {
+        flush('||');
+        i++;
+        continue;
+      }
+      if (ch === ';') {
+        flush(';');
+        continue;
+      }
+    }
+
+    current += ch;
+    currentLine += ch;
+  }
+
+  flush(';');
+  return commands;
 }
 
 function findRedirection(command) {
@@ -172,6 +271,39 @@ async function runPipeline(command, cwd) {
 }
 
 async function run(command, cwd) {
+  return await runSequence(command, cwd);
+}
+
+async function runSequence(command, cwd) {
+  const commands = splitCommands(command);
+  let output = '';
+  let previousOk = true;
+  let previousNext = ';';
+  let lastError;
+
+  for (const entry of commands) {
+    const shouldRun = previousNext === '&&' ? previousOk : previousNext === '||' ? !previousOk : true;
+    if (!shouldRun) {
+      previousNext = entry.next;
+      continue;
+    }
+
+    try {
+      output += await runSingle(entry.command, cwd);
+      previousOk = true;
+      lastError = undefined;
+    } catch (error) {
+      previousOk = false;
+      lastError = error;
+    }
+    previousNext = entry.next;
+  }
+
+  if (!previousOk && lastError) throw lastError;
+  return output;
+}
+
+async function runSingle(command, cwd) {
   const trimmed = command.trim();
   const heredocAfterPath = trimmed.match(/^cat\s+>\s+(\S+)\s+<<['"]?(\w+)['"]?\n([\s\S]*)\n\2\s*$/);
   if (heredocAfterPath) {
@@ -201,13 +333,87 @@ async function run(command, cwd) {
   return await runPipeline(trimmed, cwd);
 }
 
+async function runForLoop(command, cwd) {
+  const match = command.match(/^for\s+(\w+)\s+in\s+([\s\S]+?)\s*;\s*do\s+([\s\S]*)\s*;\s*done\s*$/);
+  if (!match) throw new Error('Unsupported for loop syntax');
+  const [, variable, rawValues, body] = match;
+  const values = await expandForValues(words(rawValues), cwd);
+  let output = '';
+  for (const value of values) {
+    const substituted = body
+      .replaceAll('${' + variable + '}', value)
+      .replaceAll('$' + variable, value);
+    output += await runSequence(substituted, cwd);
+  }
+  return output;
+}
+
+async function expandForValues(values, cwd) {
+  const out = [];
+  for (const value of values) {
+    if (value.includes('*')) {
+      const matches = await state.glob(pathFor(value, cwd));
+      out.push(...matches.map((path) => path.startsWith(cwd + '/') ? path.slice(cwd.length + 1) : path));
+    } else {
+      out.push(value);
+    }
+  }
+  return out;
+}
+
+async function grepOutput(program, args, cwd, stdin) {
+  const flags = args.filter((arg) => arg.startsWith('-')).join('');
+  const positional = args.filter((arg) => !arg.startsWith('-'));
+  const query = positional[0] ?? '';
+  const targets = positional.slice(1);
+  const regexMode = program === 'egrep' || program === 'rg' || flags.includes('E');
+  const ignoreCase = flags.includes('i');
+
+  if (targets.length === 0 && stdin !== undefined) {
+    return lines(stdin).filter((line) => matchesGrep(line, query, regexMode, ignoreCase)).join('\n') + '\n';
+  }
+
+  const files = [];
+  for (const rawTarget of targets.length > 0 ? targets : ['.']) {
+    const target = pathFor(rawTarget, cwd);
+    const stat = await state.stat(target);
+    if (stat?.type === 'file') {
+      files.push(target);
+      continue;
+    }
+    if (stat?.type === 'directory') {
+      files.push(...(await state.find(target, { type: 'file' })).map((entry) => entry.path));
+      continue;
+    }
+    throw new Error('No such file or directory: ' + rawTarget);
+  }
+
+  const out = [];
+  for (const file of files.sort()) {
+    const fileLines = lines(await state.readFile(file));
+    for (let i = 0; i < fileLines.length; i++) {
+      if (matchesGrep(fileLines[i], query, regexMode, ignoreCase)) out.push(file + ':' + (i + 1) + ':' + fileLines[i]);
+    }
+  }
+  return out.length > 0 ? out.join('\n') + '\n' : '';
+}
+
+function matchesGrep(line, query, regexMode, ignoreCase) {
+  if (regexMode) return new RegExp(query, ignoreCase ? 'i' : '').test(line);
+  const haystack = ignoreCase ? line.toLowerCase() : line;
+  const needle = ignoreCase ? query.toLowerCase() : query;
+  return haystack.includes(needle);
+}
+
 async function runArgv(argv, cwd, stdin) {
   const [program, ...args] = argv;
   if (!program) return '';
+  if (program === 'for') return await runForLoop(argv.join(' '), cwd);
   if (program === 'pwd') return cwd + '\n';
 
   if (program === 'help') return 'Supported commands: ' + SUPPORTED.join(', ') + '\n';
   if (program === 'which') return args.map((arg) => SUPPORTED.includes(arg) ? '/bin/' + arg : '').filter(Boolean).join('\n') + '\n';
+  if (program === 'set') return '';
   if (program === 'true') return '';
   if (program === 'false') throw new Error('false');
   if (program === 'clear') return '';
@@ -351,15 +557,7 @@ async function runArgv(argv, cwd, stdin) {
   if (program === 'du') return text(await state.summarizeTree(pathFor(args.at(-1), cwd), { maxDepth: 8 })) + '\n';
 
   if (program === 'grep' || program === 'egrep' || program === 'fgrep' || program === 'rg') {
-    const positional = args.filter((arg) => !arg.startsWith('-'));
-    const query = positional[0] ?? '';
-    if (!positional[1] && stdin !== undefined) {
-      return lines(stdin).filter((line) => line.includes(query)).join('\n') + '\n';
-    }
-    const target = pathFor(positional[1], cwd);
-    const stat = await state.stat(target);
-    if (stat?.type === 'file') return text(await state.searchText(target, query)) + '\n';
-    return text(await state.searchFiles(target.replace(/\/$/, '') + '/**/*', query)) + '\n';
+    return await grepOutput(program, args, cwd, stdin);
   }
 
   if (program === 'find') {
@@ -480,5 +678,8 @@ export function cloudflareTerminalSandbox({ workspace, loader, cwd = '/' }: Clou
     resolvePath,
   });
 
-  return { createSessionEnv };
+  return {
+    createSessionEnv,
+    tools: (env) => createTools(env).filter((tool) => tool.name === 'bash'),
+  };
 }

@@ -3,7 +3,6 @@ import { getDefaultWorkspace } from '@flue/runtime/cloudflare';
 import * as v from 'valibot';
 import { cloudflareTerminalSandbox } from '../lib/cloudflare-terminal';
 import { seedDemoWorkspace } from '../lib/demo-workspace';
-import { createSessionRecorder, formatSessionTranscript, runInspectionUrls } from '../lib/session-transcript';
 
 export const triggers = { webhook: true };
 
@@ -25,12 +24,23 @@ function text(value: unknown, fallback: string) {
   return typeof value === 'string' && value.trim().length > 0 ? value : fallback;
 }
 
+function runInspectionUrls(runId: string, req: Request | undefined) {
+  const path = `/runs/${encodeURIComponent(runId)}`;
+  const origin = req ? new URL(req.url).origin : '';
+
+  return {
+    run: `${origin}${path}`,
+    eventsUrl: `${origin}${path}/events?limit=1000`,
+    streamUrl: `${origin}${path}/stream`,
+  };
+}
+
 export default async function (ctx: FlueContext) {
-  const { init, id, payload, env, runId } = ctx;
+  const { init, id, payload, env, req, runId } = ctx;
   const input = payload as DemoPayload;
   const message = text(
     input.message,
-    'test.',
+    'Use the terminal to inspect this workspace and summarize what you found.',
   );
 
   const workspace = getDefaultWorkspace();
@@ -41,38 +51,9 @@ export default async function (ctx: FlueContext) {
     model,
   });
   const session = await harness.session();
-  const recorder = createSessionRecorder(ctx);
 
-  const promptResult = await (async () => {
-    try {
-      return await session.prompt(
-        `User request: ${message}`,
-        {
-          role: 'architect',
-          result,
-        },
-      );
-    } catch (error) {
-      recorder.stop();
-      throw error;
-    }
-  })();
-
-  const { data, usage, model: selectedModel } = promptResult;
-  const events = recorder.stop();
-  const inspectionUrls = runInspectionUrls(ctx);
-  const transcript = formatSessionTranscript({
-    agent: 'serverless-coding-demo',
-    instance: id,
-    runId,
-    message,
-    events,
-    outcome: data,
-    model: selectedModel,
-    usage,
-    eventsUrl: inspectionUrls.events,
-    streamUrl: inspectionUrls.stream,
-  });
+  const { data, usage, model: selectedModel } = await session.prompt(message, { result });
+  const inspectionUrls = runInspectionUrls(runId, req);
 
   return {
     agent: 'serverless-coding-demo',
@@ -82,13 +63,10 @@ export default async function (ctx: FlueContext) {
     model,
     aiGateway: gateway,
     data,
-    session: {
-      transcript,
-      events,
-      eventCapture: recorder.available ? 'inline' : 'durable-run-log-only',
-      run: inspectionUrls.run,
-      eventsUrl: inspectionUrls.events,
-      streamUrl: inspectionUrls.stream,
+    call: {
+      model: selectedModel,
+      usage,
     },
+    run: inspectionUrls,
   };
 }

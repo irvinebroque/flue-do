@@ -237,6 +237,45 @@ describe('cloudflare terminal runtime', () => {
     expect(await state.readFile('/workspace/result.txt')).toBe('a\na\ndone\n');
   });
 
+  it('supports common shell sequencing and conditionals', async () => {
+    const { run } = createRunner({
+      '/workspace/foo.txt': 'foo\n',
+      '/workspace/bar.txt': 'bar\n',
+    });
+
+    expect(await run('pwd && ls && cat foo.txt')).toBe('/workspace\nbar.txt\nfoo.txt\nfoo\n');
+    expect(await run('false || echo recovered')).toBe('recovered\n');
+    expect(await run('set -x\npwd\ncat bar.txt')).toBe('/workspace\nbar\n');
+  });
+
+  it('runs multiline redirection followed by another command', async () => {
+    const { state, run } = createRunner({});
+
+    const output = await run("printf 'hello\\n' > /tmp/demo-output.md\ncat /tmp/demo-output.md");
+
+    expect(await state.readFile('/tmp/demo-output.md')).toBe('hello\n');
+    expect(output).toBe('hello\n');
+  });
+
+  it('prints grep results like a terminal', async () => {
+    const { run } = createRunner({
+      '/workspace/brief.md': '# Serverless Agent Harness\nCloudflare demo\n',
+      '/workspace/data.json': '{"done":false}\n',
+    });
+
+    expect(await run('grep -RIn Serverless .')).toBe('/workspace/brief.md:1:# Serverless Agent Harness\n');
+    expect(await run("grep -RInE 'Serverless|Cloudflare' .")).toBe('/workspace/brief.md:1:# Serverless Agent Harness\n/workspace/brief.md:2:Cloudflare demo\n');
+  });
+
+  it('supports simple for loops over workspace files', async () => {
+    const { run } = createRunner({
+      '/workspace/foo.txt': 'foo\n',
+      '/workspace/bar.txt': 'bar\n',
+    });
+
+    expect(await run('for f in *; do echo "--- $f ---"; cat "$f"; done')).toBe('--- bar.txt ---\nbar\n--- foo.txt ---\nfoo\n');
+  });
+
   it('supports common text utilities', async () => {
     const { run } = createRunner({
       '/workspace/lines.txt': 'one\ntwo\nthree\n',

@@ -3,370 +3,381 @@ import { flue, type Fetchable } from '@flue/runtime/app';
 const flueApp = flue();
 
 const html = String.raw`<!doctype html>
-<html lang="en">
+<html lang="en" data-mode="light">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Flue Serverless Coding Agent Demo</title>
+  <link rel="stylesheet" href="https://unpkg.com/@cloudflare/kumo@2.3.0/dist/styles/kumo-standalone.css" />
   <style>
-    :root {
-      color-scheme: dark;
-      --bg: #08111f;
-      --panel: rgba(12, 24, 43, 0.86);
-      --panel-strong: #101e34;
-      --line: rgba(134, 165, 217, 0.24);
-      --text: #edf4ff;
-      --muted: #9cb0cb;
-      --accent: #66e3ff;
-      --accent-2: #b99cff;
-      --good: #7dffbd;
-      --bad: #ff8b8b;
-      --code: #06101d;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
+    :root { color-scheme: light; }
 
     * { box-sizing: border-box; }
 
     body {
       margin: 0;
       min-height: 100vh;
-      color: var(--text);
-      background:
-        radial-gradient(circle at top left, rgba(102, 227, 255, 0.18), transparent 32rem),
-        radial-gradient(circle at 80% 10%, rgba(185, 156, 255, 0.18), transparent 28rem),
-        linear-gradient(135deg, #08111f 0%, #10172b 46%, #070b13 100%);
+      color: var(--text-color-kumo-default, #171717);
+      background: var(--color-kumo-canvas, #fafafa);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
-    main {
-      width: min(1180px, calc(100% - 32px));
-      margin: 0 auto;
-      padding: 42px 0 56px;
-    }
+    button, textarea, input { font: inherit; }
 
-    .hero {
+    .app-shell {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 390px;
-      gap: 28px;
-      align-items: stretch;
-      margin-bottom: 28px;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      min-height: 100vh;
     }
 
-    .card {
-      border: 1px solid var(--line);
-      border-radius: 28px;
-      background: var(--panel);
-      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
-      backdrop-filter: blur(14px);
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      background: var(--color-kumo-base, #fff);
     }
 
-    .intro { padding: 34px; }
-
-    .eyebrow {
-      margin: 0 0 12px;
-      color: var(--accent);
-      font-size: 0.78rem;
-      font-weight: 800;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-    }
-
-    h1 {
-      margin: 0;
-      font-size: clamp(2.3rem, 7vw, 5.7rem);
-      line-height: 0.88;
-      letter-spacing: -0.075em;
-    }
-
-    .lede {
-      max-width: 710px;
-      margin: 24px 0 0;
-      color: var(--muted);
-      font-size: 1.08rem;
-      line-height: 1.7;
-    }
-
-    .stack {
-      display: grid;
-      gap: 12px;
-      align-content: stretch;
-      padding: 18px;
-    }
-
-    .fact {
-      min-height: 96px;
-      padding: 18px;
-      border: 1px solid var(--line);
-      border-radius: 20px;
-      background: rgba(255, 255, 255, 0.035);
-    }
-
-    .fact strong {
-      display: block;
-      margin-bottom: 8px;
-      color: var(--accent);
-      font-size: 0.78rem;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-    }
-
-    .fact span { color: var(--muted); line-height: 1.5; }
-
-    .runner {
-      display: grid;
-      grid-template-columns: 410px minmax(0, 1fr);
-      gap: 28px;
-      align-items: start;
-    }
-
-    form { padding: 24px; }
-
-    label {
-      display: block;
-      margin: 0 0 8px;
-      color: var(--muted);
-      font-size: 0.82rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    textarea, input {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      color: var(--text);
-      background: rgba(3, 9, 18, 0.74);
-      font: inherit;
-      outline: none;
-    }
-
-    textarea {
-      min-height: 166px;
-      resize: vertical;
-      padding: 15px 16px;
-      line-height: 1.55;
-    }
-
-    input { padding: 12px 14px; }
-
-    .field { margin-bottom: 16px; }
-
-    button {
-      width: 100%;
-      border: 0;
-      border-radius: 18px;
-      padding: 15px 18px;
-      color: #06101d;
-      background: linear-gradient(135deg, var(--accent), var(--accent-2));
-      font: inherit;
-      font-weight: 850;
-      cursor: pointer;
-      transition: transform 160ms ease, opacity 160ms ease;
-    }
-
-    button:hover { transform: translateY(-1px); }
-    button:disabled { cursor: wait; opacity: 0.58; transform: none; }
-
-    .hint {
-      margin: 14px 0 0;
-      color: var(--muted);
-      font-size: 0.9rem;
-      line-height: 1.5;
-    }
-
-    .workspace {
-      overflow: hidden;
-    }
-
-    .toolbar {
+    .topbar-inner {
       display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      justify-content: space-between;
       align-items: center;
-      padding: 18px 22px;
-      border-bottom: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.025);
+      justify-content: space-between;
+      gap: 16px;
+      width: min(100%, 960px);
+      margin: 0 auto;
+      padding: 12px 18px;
     }
 
-    .status {
-      color: var(--muted);
-      font-size: 0.95rem;
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
     }
 
-    .pill {
+    .brand-mark { display: none; }
+
+    .brand-title { margin: 0; font-size: 0.95rem; font-weight: 720; }
+    .brand-subtitle { margin: 1px 0 0; color: var(--text-color-kumo-subtle, #a3a3a3); font-size: 0.78rem; }
+
+    .status-pill {
       display: inline-flex;
       align-items: center;
       gap: 8px;
       min-height: 30px;
-      padding: 6px 10px;
-      border: 1px solid var(--line);
+      padding: 0 10px;
+      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
       border-radius: 999px;
-      color: var(--muted);
-      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-color-kumo-subtle, #a3a3a3);
+      background: var(--color-kumo-base, #fff);
       font-size: 0.82rem;
+      white-space: nowrap;
     }
 
-    .dot {
+    .status-dot {
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      background: var(--muted);
+      background: var(--text-color-kumo-subtle, #a3a3a3);
     }
 
-    .dot.running { background: var(--accent); box-shadow: 0 0 18px var(--accent); }
-    .dot.done { background: var(--good); }
-    .dot.error { background: var(--bad); }
+    .status-dot.running { background: var(--color-kumo-brand, #f6821f); }
+    .status-dot.done { background: #4ade80; }
+    .status-dot.error { background: #fb7185; }
 
-    .panes {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      min-height: 640px;
-    }
-
-    .pane {
-      min-width: 0;
-      padding: 18px;
-    }
-
-    .pane + .pane { border-left: 1px solid var(--line); }
-
-    .pane h2 {
-      margin: 0 0 14px;
-      color: var(--accent);
-      font-size: 0.8rem;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-    }
-
-    #events {
-      display: grid;
-      gap: 12px;
-      max-height: 575px;
+    .chat-log {
+      width: min(100%, 960px);
+      margin: 0 auto;
+      padding: 24px 18px;
       overflow: auto;
-      padding-right: 4px;
     }
 
-    .event {
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 14px;
-      background: rgba(255, 255, 255, 0.035);
+    .empty-state {
+      display: grid;
+      place-items: center;
+      min-height: 54vh;
+      text-align: center;
     }
 
-    .event-title {
+    .empty-card {
+      width: min(100%, 680px);
+      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border-radius: 12px;
+      background: var(--color-kumo-base, #fff);
+      padding: 24px;
+    }
+
+    .empty-card h1 {
+      margin: 0 0 10px;
+      font-size: 1.5rem;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+
+    .empty-card p {
+      margin: 0 auto;
+      max-width: 560px;
+      color: var(--text-color-kumo-subtle, #a3a3a3);
+      line-height: 1.6;
+    }
+
+    .message {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+      margin: 0 0 14px;
+    }
+
+    .message.user {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .avatar { display: none; }
+
+    .bubble {
+      width: fit-content;
+      max-width: min(760px, 100%);
+      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border-radius: 12px;
+      background: var(--color-kumo-base, #fff);
+      padding: 12px;
+    }
+
+    .message.user .bubble {
+      justify-self: end;
+      background: var(--color-kumo-tint, #f5f5f5);
+      border-color: var(--color-kumo-fill, #e5e5e5);
+    }
+
+    .bubble.work {
+      width: 100%;
+      background: var(--color-kumo-base, #fff);
+    }
+
+    .bubble.final {
+      width: 100%;
+      border-color: var(--color-kumo-brand, #f6821f);
+    }
+
+    .message-label {
       display: flex;
+      align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 8px;
-      color: var(--text);
-      font-weight: 780;
+      margin-bottom: 6px;
+      color: var(--text-color-kumo-subtle, #a3a3a3);
+      font-size: 0.78rem;
+      font-weight: 600;
     }
 
-    .event small { color: var(--muted); }
+    .message-body {
+      margin: 0;
+      color: var(--text-color-kumo-default, #171717);
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .message-body p { margin: 0 0 10px; }
+    .message-body p:last-child { margin-bottom: 0; }
+
+    .final-summary { margin: 0 0 12px; line-height: 1.6; }
+
+    .outcome-grid {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .outcome-list {
+      margin: 6px 0 0;
+      padding-left: 20px;
+      color: var(--text-color-kumo-subtle, #a3a3a3);
+    }
 
     pre {
       overflow: auto;
       margin: 8px 0 0;
-      padding: 12px;
-      border: 1px solid rgba(134, 165, 217, 0.16);
-      border-radius: 14px;
-      color: #d9e8ff;
-      background: var(--code);
-      font: 0.86rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      padding: 10px;
+      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border-radius: 8px;
+      color: var(--text-color-kumo-default, #171717);
+      background: var(--color-kumo-recessed, #f5f5f5);
+      font: 0.83rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       white-space: pre-wrap;
-      word-break: break-word;
+      overflow-wrap: anywhere;
     }
 
-    #outcome {
-      min-height: 575px;
-      max-height: 575px;
-      overflow: auto;
-      margin: 0;
-    }
-
-    .links {
-      display: none;
-      gap: 10px;
+    .run-links {
+      display: flex;
       flex-wrap: wrap;
+      gap: 10px;
       margin-top: 14px;
     }
 
-    .links a {
-      color: var(--accent);
+    .run-links a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 0 10px;
+      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border-radius: 999px;
+      color: var(--text-color-kumo-link, #93c5fd);
+      background: var(--color-kumo-tint, #f5f5f5);
       text-decoration: none;
-      font-size: 0.9rem;
+      font-size: 0.82rem;
+      font-weight: 650;
     }
 
-    @media (max-width: 980px) {
-      main { width: min(100% - 22px, 720px); padding-top: 22px; }
-      .hero, .runner, .panes { grid-template-columns: 1fr; }
-      .pane + .pane { border-left: 0; border-top: 1px solid var(--line); }
-      .intro { padding: 24px; }
-      #events, #outcome { max-height: none; }
+    .composer-wrap {
+      position: sticky;
+      bottom: 0;
+      border-top: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      background: var(--color-kumo-canvas, #fafafa);
+      padding: 12px 18px;
+    }
+
+    .composer {
+      width: min(100%, 960px);
+      margin: 0 auto;
+      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border-radius: 12px;
+      background: var(--color-kumo-base, #fff);
+      padding: 12px;
+    }
+
+    .composer-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+      color: var(--text-color-kumo-subtle, #a3a3a3);
+      font-size: 0.8rem;
+    }
+
+    .session-field {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .session-field span { white-space: nowrap; }
+
+    .session-input {
+      width: min(260px, 42vw);
+      min-height: 30px;
+      border: 1px solid var(--color-kumo-hairline, rgba(255, 255, 255, 0.12));
+      border-radius: 8px;
+      color: var(--text-color-kumo-default, #171717);
+      background: var(--color-kumo-recessed, #f5f5f5);
+      padding: 0 10px;
+      outline: none;
+    }
+
+    .prompt-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 68px;
+      max-height: 220px;
+      resize: vertical;
+      border: 0;
+      border-radius: 8px;
+      color: var(--text-color-kumo-default, #171717);
+      background: var(--color-kumo-recessed, #f5f5f5);
+      padding: 13px 14px;
+      line-height: 1.5;
+      outline: none;
+    }
+
+    .send-button {
+      min-height: 44px;
+      border: 0;
+      border-radius: 8px;
+      padding: 0 18px;
+      color: #15110c;
+      background: var(--color-kumo-brand, #f6821f);
+      font-weight: 760;
+      cursor: pointer;
+    }
+
+    .send-button:disabled { cursor: wait; opacity: 0.6; }
+
+    @media (max-width: 720px) {
+      .topbar-inner { padding-inline: 12px; }
+      .chat-log { padding-inline: 12px; }
+      .message, .message.user { grid-template-columns: 1fr; }
+      .avatar { display: none; }
+      .bubble { max-width: 100%; width: 100%; }
+      .message.user .bubble { justify-self: stretch; }
+      .prompt-row { grid-template-columns: 1fr; }
+      .send-button { width: 100%; }
+      .composer-top { align-items: flex-start; flex-direction: column; }
+      .session-input { width: 100%; }
+      .session-field { width: 100%; }
     }
   </style>
 </head>
-<body>
-  <main>
-    <section class="hero">
-      <div class="card intro">
-        <p class="eyebrow">Cloudflare + Flue</p>
-        <h1>Serverless coding agent trace.</h1>
-        <p class="lede">Trigger the Flue agent, watch its tool calls live, then inspect the exact outcome and transcript. The harness runs in a Cloudflare Durable Object, stores session state durably, and executes familiar terminal commands through a Dynamic Worker-backed shell.</p>
+<body class="bg-kumo-canvas text-kumo-default">
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand" aria-label="Flue serverless coding agent demo">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <p class="brand-title">Flue Serverless Coding Agent</p>
+            <p class="brand-subtitle">Cloudflare Workers, Durable Objects, AI Gateway, and @cloudflare/shell</p>
+          </div>
+        </div>
+        <span class="status-pill"><span class="status-dot" id="status-dot"></span><span id="status-text">Ready</span></span>
       </div>
-      <div class="card stack" aria-label="Demo capabilities">
-        <div class="fact"><strong>Harness</strong><span>Flue sessions persist inside the agent instance. Reuse an id to continue the same serverless session.</span></div>
-        <div class="fact"><strong>Terminal</strong><span>The model calls the normal bash tool. This demo adapts it to @cloudflare/shell instead of a container.</span></div>
-        <div class="fact"><strong>Trace</strong><span>The UI renders Flue run events. It shows commands, tool output, progress, and final result without exposing private reasoning text.</span></div>
-      </div>
-    </section>
+    </header>
 
-    <section class="runner">
-      <form class="card" id="demo-form">
-        <div class="field">
-          <label for="message">Prompt</label>
-          <textarea id="message" name="message">Show a serverless coding-agent harness with familiar terminal commands, a virtual filesystem, Cloudflare AI Gateway default, and no container sandbox.</textarea>
+    <main class="chat-log" id="chat-log" aria-live="polite">
+      <section class="empty-state" id="empty-state">
+        <div class="empty-card bg-kumo-base border-kumo-hairline">
+          <h1>What should the agent show?</h1>
+          <p>Ask the demo to prove it can inspect files, run terminal commands, write to its workspace, and return a structured outcome. The full work trace will appear here as the session runs.</p>
         </div>
-        <div class="field">
-          <label for="session-id">Agent instance id</label>
-          <input id="session-id" name="session-id" />
+      </section>
+    </main>
+
+    <section class="composer-wrap">
+      <form class="composer bg-kumo-base border-kumo-hairline" id="demo-form">
+        <div class="composer-top">
+          <label class="session-field" for="session-id">
+            <span>Agent instance</span>
+            <input class="session-input" id="session-id" name="session-id" />
+          </label>
+          <span id="run-id">No run yet</span>
         </div>
-        <button id="run-button" type="submit">Run Agent</button>
-        <p class="hint">The page uses Flue's built-in SSE mode: <code>POST /agents/serverless-coding-demo/&lt;id&gt;</code> with <code>Accept: text/event-stream</code>.</p>
-        <div class="links" id="links"></div>
+        <div class="prompt-row">
+          <textarea id="message" name="message" aria-label="Prompt">Use the terminal to inspect this workspace and prove the serverless demo works. Show familiar commands like cat and grep, then write a short note to /tmp/demo-output.md and show it.</textarea>
+          <button class="send-button" id="run-button" type="submit">Run</button>
+        </div>
       </form>
-
-      <div class="card workspace">
-        <div class="toolbar">
-          <div class="status"><span class="pill"><span class="dot" id="status-dot"></span><span id="status-text">Ready</span></span></div>
-          <span class="pill" id="run-id">No run yet</span>
-        </div>
-        <div class="panes">
-          <div class="pane">
-            <h2>Live Work Trace</h2>
-            <div id="events"></div>
-          </div>
-          <div class="pane">
-            <h2>Outcome And Transcript</h2>
-            <pre id="outcome">Run the agent to see the final structured outcome and Markdown transcript.</pre>
-          </div>
-        </div>
-      </div>
     </section>
-  </main>
+  </div>
 
   <script>
     const form = document.querySelector('#demo-form');
+    const chatLog = document.querySelector('#chat-log');
+    const emptyState = document.querySelector('#empty-state');
     const message = document.querySelector('#message');
     const sessionId = document.querySelector('#session-id');
     const button = document.querySelector('#run-button');
-    const eventsEl = document.querySelector('#events');
-    const outcome = document.querySelector('#outcome');
     const runIdEl = document.querySelector('#run-id');
     const statusText = document.querySelector('#status-text');
     const statusDot = document.querySelector('#status-dot');
-    const links = document.querySelector('#links');
+    const toolCards = new Map();
+    let currentRunId = '';
 
     sessionId.value = 'demo-' + Math.random().toString(36).slice(2, 9);
 
@@ -375,9 +386,21 @@ const html = String.raw`<!doctype html>
       await runAgent();
     });
 
+    message.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
     async function runAgent() {
+      const prompt = message.value.trim();
+      if (!prompt) return;
+
       const id = encodeURIComponent(sessionId.value.trim() || 'demo-session');
-      resetUi();
+      resetRun();
+      appendUserMessage(prompt);
+      message.value = '';
       setStatus('running', 'Agent running');
       button.disabled = true;
 
@@ -388,17 +411,20 @@ const html = String.raw`<!doctype html>
             'content-type': 'application/json',
             accept: 'text/event-stream',
           },
-          body: JSON.stringify({ message: message.value }),
+          body: JSON.stringify({ message: prompt }),
         });
 
         const headerRunId = response.headers.get('x-flue-run-id');
-        if (headerRunId) setRunId(headerRunId);
+        if (headerRunId) {
+          currentRunId = headerRunId;
+          setRunId(headerRunId);
+        }
         if (!response.ok || !response.body) throw new Error('Agent request failed: HTTP ' + response.status);
 
-        await readSse(response.body, (frame) => handleFrame(frame));
+        await readSse(response.body, (frame) => handleFrame(frame, prompt));
       } catch (error) {
         setStatus('error', 'Run failed');
-        addEvent('Error', error instanceof Error ? error.message : String(error), 'error');
+        appendWorkMessage('Error', error instanceof Error ? error.message : String(error), { tone: 'error' });
       } finally {
         button.disabled = false;
       }
@@ -438,124 +464,211 @@ const html = String.raw`<!doctype html>
       return frame;
     }
 
-    function handleFrame(frame) {
+    function handleFrame(frame, prompt) {
       let event;
       try {
         event = JSON.parse(frame.data);
       } catch {
-        addEvent(frame.event, frame.data);
+        appendWorkMessage(frame.event, frame.data);
         return;
       }
 
-      if (event.runId) setRunId(event.runId);
+      if (event.runId) {
+        currentRunId = event.runId;
+        setRunId(event.runId);
+      }
 
       switch (event.type) {
         case 'run_start':
-          addEvent('Run started', 'Cloudflare Durable Object accepted the invocation.');
+          appendWorkMessage('Run started', 'Cloudflare accepted the invocation and routed it to a Durable Object agent instance.');
           break;
         case 'operation_start':
-          addEvent('Operation started', event.operationKind);
+          appendWorkMessage('Operation started', event.operationKind);
           break;
         case 'tool_start':
-          addEvent('Tool: ' + event.toolName, commandFromEvent(event) || JSON.stringify(event.args, null, 2));
+          appendToolStart(event);
           break;
         case 'tool_call':
-          addEvent('Tool result', toolResultText(event) || (event.isError ? 'Tool failed.' : 'Tool completed.'), event.isError ? 'error' : 'tool');
+          appendToolResult(event);
           break;
         case 'text_delta':
-          appendAssistant(event.text);
+          appendAssistantDelta(event.text);
           break;
         case 'thinking_start':
-          addEvent('Reasoning', 'The model is reasoning internally. Private reasoning text is intentionally not displayed.');
+          appendWorkMessage('Reasoning', 'The model is reasoning internally. Private thinking text is not displayed, but all tool calls and outputs are shown.');
           break;
         case 'turn':
-          addEvent('Model turn complete', [event.model, event.usage ? event.usage.totalTokens + ' tokens' : undefined].filter(Boolean).join(' | '));
+          appendWorkMessage('Model turn complete', [event.model, event.usage ? event.usage.totalTokens + ' tokens' : undefined].filter(Boolean).join(' | '));
           break;
         case 'operation':
-          addEvent('Operation complete', event.operationKind + ' in ' + event.durationMs + 'ms');
+          appendWorkMessage('Operation complete', event.operationKind + ' in ' + event.durationMs + 'ms');
           break;
         case 'run_end':
-          handleRunEnd(event);
+          handleRunEnd(event, prompt);
           break;
         case 'log':
-          addEvent('Log: ' + event.level, event.message);
+          appendWorkMessage('Log: ' + event.level, event.message);
           break;
       }
     }
 
-    function handleRunEnd(event) {
+    function handleRunEnd(event, prompt) {
       if (event.isError) {
         setStatus('error', 'Run ended with an error');
-        outcome.textContent = JSON.stringify(event.error, null, 2);
+        appendWorkMessage('Run error', JSON.stringify(event.error, null, 2), { tone: 'error' });
         return;
       }
 
       setStatus('done', 'Run complete');
       const result = event.result || {};
-      const transcript = result.session?.transcript;
-      outcome.textContent = [
-        'Final outcome:',
-        JSON.stringify(result.data || result, null, 2),
-        transcript ? '\nTranscript:\n' + transcript : '',
-      ].filter(Boolean).join('\n');
-
-      const session = result.session;
-      if (session?.eventsUrl || session?.streamUrl) {
-        links.style.display = 'flex';
-        links.innerHTML = '';
-        if (session.eventsUrl) links.appendChild(linkTo(session.eventsUrl, 'Durable event log'));
-        if (session.streamUrl) links.appendChild(linkTo(session.streamUrl, 'Replay stream'));
-      }
+      appendFinalOutcome(result, prompt);
     }
 
-    function resetUi() {
-      eventsEl.innerHTML = '';
-      links.innerHTML = '';
-      links.style.display = 'none';
-      outcome.textContent = 'Waiting for the agent to finish...';
+    function resetRun() {
+      currentRunId = '';
+      toolCards.clear();
+      emptyState?.remove();
+      chatLog.innerHTML = '';
       setRunId('Starting...');
     }
 
-    function setStatus(kind, text) {
-      statusText.textContent = text;
-      statusDot.className = 'dot ' + (kind || '');
+    function appendUserMessage(text) {
+      const row = createMessage('user', 'You');
+      row.body.textContent = text;
+      chatLog.appendChild(row.el);
+      scrollToBottom();
     }
 
-    function setRunId(value) {
-      runIdEl.textContent = value ? 'Run: ' + value : 'No run yet';
-    }
-
-    function addEvent(title, body, kind) {
-      const card = document.createElement('div');
-      card.className = 'event';
-      const titleRow = document.createElement('div');
-      titleRow.className = 'event-title';
-      titleRow.innerHTML = '<span></span><small></small>';
-      titleRow.querySelector('span').textContent = title;
-      titleRow.querySelector('small').textContent = new Date().toLocaleTimeString();
-      card.appendChild(titleRow);
-      if (body) {
-        const pre = document.createElement('pre');
-        pre.textContent = body;
-        if (kind === 'error') pre.style.borderColor = 'rgba(255, 139, 139, 0.45)';
-        card.appendChild(pre);
+    function appendAssistantDelta(text) {
+      let row = chatLog.lastElementChild;
+      if (!row || row.dataset.kind !== 'assistant-stream') {
+        const created = createMessage('assistant', 'Agent');
+        created.el.dataset.kind = 'assistant-stream';
+        created.body.textContent = '';
+        chatLog.appendChild(created.el);
+        row = created.el;
       }
-      eventsEl.appendChild(card);
-      eventsEl.scrollTop = eventsEl.scrollHeight;
+      row.querySelector('.message-body').textContent += text;
+      scrollToBottom();
     }
 
-    function appendAssistant(text) {
-      let last = eventsEl.lastElementChild;
-      if (!last || last.dataset.kind !== 'assistant') {
-        addEvent('Assistant output', '');
-        last = eventsEl.lastElementChild;
-        last.dataset.kind = 'assistant';
-        const pre = document.createElement('pre');
-        last.appendChild(pre);
+    function appendWorkMessage(title, body, options) {
+      const row = createMessage('assistant', title, { work: true });
+      if (options?.tone === 'error') row.bubble.style.borderColor = 'rgba(251, 113, 133, 0.45)';
+      row.body.textContent = body || '';
+      chatLog.appendChild(row.el);
+      scrollToBottom();
+      return row;
+    }
+
+    function appendToolStart(event) {
+      const command = commandFromEvent(event);
+      const title = event.toolName === 'bash' && command ? 'Terminal command' : 'Tool call: ' + event.toolName;
+      const row = appendWorkMessage(title, '');
+      if (command) row.body.appendChild(pre('$ ' + command, 'bash'));
+      else row.body.appendChild(pre(JSON.stringify(event.args || {}, null, 2), 'json'));
+      toolCards.set(event.toolCallId, row);
+    }
+
+    function appendToolResult(event) {
+      const row = toolCards.get(event.toolCallId) || appendWorkMessage('Tool result: ' + event.toolName, '');
+      const result = toolResultText(event) || (event.isError ? 'Tool failed.' : 'Tool completed.');
+      const label = document.createElement('div');
+      label.className = 'message-label';
+      label.textContent = (event.toolName === 'bash' ? 'Command ' : 'Result ') + (event.isError ? 'failed' : 'completed') + ' in ' + event.durationMs + 'ms';
+      row.body.appendChild(label);
+      row.body.appendChild(pre(result, 'text'));
+      if (event.isError) row.bubble.style.borderColor = 'rgba(251, 113, 133, 0.45)';
+      scrollToBottom();
+    }
+
+    function appendFinalOutcome(result, prompt) {
+      const row = createMessage('assistant', 'Final outcome', { final: true });
+      const data = result.data || result;
+      const summary = document.createElement('p');
+      summary.className = 'final-summary';
+      summary.textContent = data.summary || 'The agent completed the session.';
+      row.body.appendChild(summary);
+
+      const grid = document.createElement('div');
+      grid.className = 'outcome-grid';
+      grid.appendChild(detailList('Terminal commands', data.terminalCommands));
+      grid.appendChild(detailList('Files inspected', data.filesInspected));
+      grid.appendChild(detailList('Files changed', data.filesChanged));
+      row.body.appendChild(grid);
+
+      row.body.appendChild(pre(JSON.stringify(data, null, 2), 'json'));
+      row.body.appendChild(runLinks(result.run || runLinksFor(currentRunId)));
+      chatLog.appendChild(row.el);
+      scrollToBottom();
+    }
+
+    function detailList(title, items) {
+      const section = document.createElement('section');
+      const label = document.createElement('div');
+      label.className = 'message-label';
+      label.textContent = title;
+      section.appendChild(label);
+      const list = document.createElement('ul');
+      list.className = 'outcome-list';
+      const values = Array.isArray(items) && items.length ? items : ['None reported'];
+      for (const item of values) {
+        const li = document.createElement('li');
+        li.textContent = String(item);
+        list.appendChild(li);
       }
-      const pre = last.querySelector('pre');
-      pre.textContent += text;
-      eventsEl.scrollTop = eventsEl.scrollHeight;
+      section.appendChild(list);
+      return section;
+    }
+
+    function createMessage(kind, label, options) {
+      const el = document.createElement('article');
+      el.className = 'message ' + (kind === 'user' ? 'user' : 'assistant');
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar';
+      avatar.textContent = kind === 'user' ? 'You' : 'AI';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble' + (options?.work ? ' work' : '') + (options?.final ? ' final' : '');
+      const header = document.createElement('div');
+      header.className = 'message-label';
+      header.textContent = label;
+      const body = document.createElement('div');
+      body.className = 'message-body';
+      bubble.appendChild(header);
+      bubble.appendChild(body);
+      if (kind === 'user') {
+        el.appendChild(bubble);
+        el.appendChild(avatar);
+      } else {
+        el.appendChild(avatar);
+        el.appendChild(bubble);
+      }
+      return { el, bubble, body };
+    }
+
+    function pre(value, lang) {
+      const node = document.createElement('pre');
+      node.dataset.lang = lang;
+      node.textContent = value;
+      return node;
+    }
+
+    function runLinks(links) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'run-links';
+      if (links?.eventsUrl) wrapper.appendChild(linkTo(links.eventsUrl, 'Durable event log'));
+      if (links?.streamUrl) wrapper.appendChild(linkTo(links.streamUrl, 'Replay stream'));
+      return wrapper;
+    }
+
+    function runLinksFor(runId) {
+      if (!runId) return null;
+      const path = '/runs/' + encodeURIComponent(runId);
+      return {
+        run: path,
+        eventsUrl: path + '/events?limit=1000',
+        streamUrl: path + '/stream',
+      };
     }
 
     function commandFromEvent(event) {
@@ -575,6 +688,19 @@ const html = String.raw`<!doctype html>
       a.rel = 'noreferrer';
       a.textContent = text;
       return a;
+    }
+
+    function setStatus(kind, text) {
+      statusText.textContent = text;
+      statusDot.className = 'status-dot ' + (kind || '');
+    }
+
+    function setRunId(value) {
+      runIdEl.textContent = value ? 'Run: ' + value : 'No run yet';
+    }
+
+    function scrollToBottom() {
+      requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }));
     }
   </script>
 </body>

@@ -9,20 +9,19 @@ Flue owns the programmable TypeScript harness, while `@cloudflare/shell` provide
 - A Cloudflare Workers deploy target for Flue.
 - A Flue harness running in a Cloudflare Durable Object, so no container is required.
 - A durable `@cloudflare/shell` Workspace for scratch files and generated artifacts.
-- Familiar coding-agent tools like `bash`, `read`, `write`, `edit`, `grep`, and `glob`.
-- Terminal commands passed to `bash` execute inside a Cloudflare Dynamic Worker.
+- Familiar terminal commands like `pwd`, `ls`, `cat`, `grep`, and shell redirection through the agent's `bash` tool.
+- Terminal commands passed to `bash` execute inside a Cloudflare Dynamic Worker; the demo intentionally exposes only `bash` so the work trace looks like a terminal session.
 - Cloudflare AI Gateway through the Workers AI binding with gateway id `default`.
 - Host-controlled setup through TypeScript before the model runs.
 - Structured output proving which commands ran and which files were inspected and changed.
-- A readable session transcript and raw Flue run events returned with the demo response.
+- A Kumo-styled chat UI that shows Flue's live run events, tool calls, terminal output, and final outcome.
 
 ## Project Layout
 
 This directory was empty when scaffolded, so it uses the root Flue layout:
 
 - `agents/serverless-coding-demo.ts` - HTTP agent endpoint.
-- `app.ts` - Small web UI at `/` plus delegation back to Flue's built-in routes.
-- `roles/architect.md` - role instructions for platform-engineer-facing output.
+- `app.ts` - Small Kumo-styled chat UI at `/` plus delegation back to Flue's built-in routes.
 - `wrangler.jsonc` - Cloudflare Workers config with the `AI` binding used by Cloudflare AI Gateway and the `LOADER` binding used by Dynamic Worker execution.
 
 ## Setup
@@ -57,7 +56,7 @@ Open the web demo:
 http://localhost:3583/
 ```
 
-The page triggers the same agent endpoint with `Accept: text/event-stream`, renders Flue run events live, and then shows the final structured outcome plus the Markdown transcript returned by the agent.
+The page uses Kumo's standalone stylesheet and a familiar chat layout. It triggers the same agent endpoint with `Accept: text/event-stream`, renders Flue run events live as chat messages, and then shows the final structured outcome as the last assistant response.
 
 Call the demo agent:
 
@@ -72,12 +71,11 @@ Reuse the same `demo-session-1` id to demonstrate Durable Object scoped state ac
 The JSON response includes:
 
 - `result.data` - the typed outcome returned by the agent.
-- `result.session.transcript` - a Markdown transcript of the prompt, model turns, tool calls, terminal commands, tool output, and final outcome.
-- `result.session.events` - the captured Flue run events for this prompt call, excluding model thinking deltas so the transcript stays user-facing.
-- `result.session.eventsUrl` - the durable Cloudflare-backed run event log at `/runs/<runId>/events?limit=1000`.
-- `result.session.streamUrl` - the replayable event stream at `/runs/<runId>/stream`.
+- `result.call` - the selected model and token usage for the prompt call.
+- `result.run.eventsUrl` - the durable Cloudflare-backed run event log at `/runs/<runId>/events?limit=1000`.
+- `result.run.streamUrl` - the replayable event stream at `/runs/<runId>/stream`.
 
-For a live event-stream view instead of a sync JSON response, add `-H "Accept: text/event-stream"` to the same request. Flue will stream the same tool and run events as server-sent events while the agent is running.
+For a live event-stream view instead of a sync JSON response, add `-H "Accept: text/event-stream"` to the same request. Flue will stream tool calls, terminal command output, model turns, and run lifecycle events as server-sent events while the agent is running.
 
 This demo does not add a separate Cloudflare Agents SDK chat UI. Flue's Cloudflare target already uses Durable Objects and the Agents SDK under the hood for agent instances, while Flue exposes the simple app-facing API used here: `POST /agents/<agent>/<id>`, `Accept: text/event-stream`, and `/runs/<runId>/events`.
 

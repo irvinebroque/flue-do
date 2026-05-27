@@ -1,15 +1,27 @@
 import type { Workspace } from '@cloudflare/shell';
 
-const seedMarker = '/.demo-v3';
+const seedMarker = '/.demo-v5';
 
 const files: Record<string, string> = {
-  '/workspace/AGENTS.md': 'Use bash tools. Keep the demo short.\n',
   '/workspace/foo.txt': 'foo\n',
   '/workspace/bar.txt': 'bar\n',
   '/workspace/data.json': JSON.stringify({ foo: 'bar', done: false }, null, 2),
+  '/workspace/brief.md': [
+    '# Serverless Agent Harness',
+    '',
+    'This demo runs a Flue harness on Cloudflare Workers and Durable Objects.',
+    'Terminal commands execute through @cloudflare/shell and a Dynamic Worker.',
+    'No container sandbox is required for this demonstration.',
+    '',
+  ].join('\n'),
 };
 
 export async function seedDemoWorkspace(workspace: Workspace) {
+  const staleAgents = await workspace.readFile('/workspace/AGENTS.md').catch(() => null);
+  if (staleAgents?.includes('terminal-first Cloudflare serverless agent demo')) {
+    await workspace.rm('/workspace/AGENTS.md', { force: true });
+  }
+
   if (await workspace.exists(seedMarker)) return;
 
   await workspace.mkdir('/workspace', { recursive: true });
