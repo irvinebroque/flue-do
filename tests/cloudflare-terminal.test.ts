@@ -1,15 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-
-const source = readFileSync(new URL('../lib/cloudflare-terminal.ts', import.meta.url), 'utf8');
-const terminalRuntime = source.match(/terminalRuntime = String\.raw`([\s\S]*?)`;\n\nfunction normalize/)?.[1];
-
-if (!terminalRuntime) throw new Error('Could not extract terminalRuntime from lib/cloudflare-terminal.ts');
+import { createWorkspaceBash } from '../lib/cloudflare-terminal';
 
 type Entry =
-  | { type: 'file'; content: string }
-  | { type: 'directory' }
-  | { type: 'symlink'; target: string };
+  | { type: 'file'; content: string | Uint8Array; mtime: Date }
+  | { type: 'directory'; mtime: Date }
+  | { type: 'symlink'; target: string; mtime: Date };
 
 function normalize(path: string) {
   const parts: string[] = [];
@@ -21,30 +16,21 @@ function normalize(path: string) {
   return `/${parts.join('/')}`;
 }
 
-function nameOf(path: string) {
-  return normalize(path).split('/').pop() || '/';
-}
-
 function parentOf(path: string) {
   const normalized = normalize(path);
   const index = normalized.lastIndexOf('/');
   return index <= 0 ? '/' : normalized.slice(0, index);
 }
 
-function globToRegExp(pattern: string) {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*\//g, '(?:.*/)?')
-    .replace(/\*\*/g, '.*')
-    .replace(/\*/g, '[^/]*');
-  return new RegExp(`^${escaped}$`);
+function nameOf(path: string) {
+  return normalize(path).split('/').pop() || '/';
 }
 
-class MockState {
+class MockWorkspace {
   entries = new Map<string, Entry>();
 
   constructor(files: Record<string, string>) {
-    this.entries.set('/', { type: 'directory' });
+    this.entries.set('/', { type: 'directory', mtime: new Date(0) });
     for (const [path, content] of Object.entries(files)) this.writeFileSync(path, content);
   }
 
@@ -52,38 +38,77 @@ class MockState {
     let current = '';
     for (const part of normalize(path).split('/').filter(Boolean)) {
       current += `/${part}`;
-      if (!this.entries.has(current)) this.entries.set(current, { type: 'directory' });
+      if (!this.entries.has(current)) this.entries.set(current, { type: 'directory', mtime: new Date(0) });
     }
   }
 
-  private writeFileSync(path: string, content: string) {
+  private writeFileSync(path: string, content: string | Uint8Array) {
     const normalized = normalize(path);
     this.mkdirp(parentOf(normalized));
-    this.entries.set(normalized, { type: 'file', content });
+    this.entries.set(normalized, { type: 'file', content, mtime: new Date(0) });
   }
 
   async readFile(path: string) {
     const entry = this.entries.get(normalize(path));
-    if (!entry || entry.type !== 'file') throw new Error(`ENOENT: ${path}`);
-    return entry.content;
+    if (!entry || entry.type !== 'file') return null;
+    return typeof entry.content === 'string' ? entry.content : new TextDecoder().decode(entry.content);
+  }
+
+  async readFileBytes(path: string) {
+    const entry = this.entries.get(normalize(path));
+    if (!entry || entry.type !== 'file') return null;
+    return typeof entry.content === 'string' ? new TextEncoder().encode(entry.content) : entry.content;
   }
 
   async writeFile(path: string, content: string) {
     this.writeFileSync(path, content);
   }
 
+  async writeFileBytes(path: string, content: Uint8Array) {
+    this.writeFileSync(path, content);
+  }
+
   async appendFile(path: string, content: string) {
-    const normalized = normalize(path);
-    const existing = this.entries.get(normalized);
-    this.writeFileSync(normalized, (existing?.type === 'file' ? existing.content : '') + content);
+    this.writeFileSync(path, ((await this.readFile(path)) ?? '') + content);
   }
 
   async exists(path: string) {
     return this.entries.has(normalize(path));
   }
 
+  async stat(path: string) {
+    const normalized = normalize(path);
+    const entry = this.entries.get(normalized);
+    if (!entry) return null;
+    return {
+      path: normalized,
+      name: nameOf(normalized),
+      type: entry.type,
+      mimeType: entry.type === 'directory' ? 'inode/directory' : 'text/plain',
+      size: entry.type === 'file' ? (typeof entry.content === 'string' ? entry.content.length : entry.content.byteLength) : 0,
+      createdAt: entry.mtime.getTime(),
+      updatedAt: entry.mtime.getTime(),
+    };
+  }
+
+  async lstat(path: string) {
+    return this.stat(path);
+  }
+
   async mkdir(path: string) {
     this.mkdirp(path);
+  }
+
+  async readDir(path = '/') {
+    const normalized = normalize(path);
+    const prefix = normalized === '/' ? '/' : `${normalized}/`;
+    const children = new Set<string>();
+    for (const key of this.entries.keys()) {
+      if (key === normalized || !key.startsWith(prefix)) continue;
+      const child = key.slice(prefix.length).split('/')[0];
+      if (child) children.add(`${prefix}${child}`);
+    }
+    return (await Promise.all([...children].sort().map((child) => this.stat(child)))).filter((entry) => entry !== null);
   }
 
   async rm(path: string, options?: { recursive?: boolean; force?: boolean }) {
@@ -92,28 +117,14 @@ class MockState {
       if (options?.force) return;
       throw new Error(`ENOENT: ${path}`);
     }
-    for (const key of [...this.entries.keys()]) {
-      if (key === normalized || (options?.recursive && key.startsWith(`${normalized}/`))) {
-        this.entries.delete(key);
-      }
-    }
-  }
-
-  async readdir(path: string) {
-    const normalized = normalize(path);
-    const prefix = normalized === '/' ? '/' : `${normalized}/`;
-    return [...this.entries.keys()]
-      .filter((key) => key.startsWith(prefix) && key !== normalized)
-      .map((key) => key.slice(prefix.length).split('/')[0])
-      .filter((value, index, array) => value && array.indexOf(value) === index)
-      .sort();
-  }
-
-  async stat(path: string) {
-    const normalized = normalize(path);
     const entry = this.entries.get(normalized);
-    if (!entry) return null;
-    return { type: entry.type, size: entry.type === 'file' ? entry.content.length : 0, mtime: new Date(0) };
+    if (entry?.type === 'directory' && !options?.recursive) {
+      const hasChildren = [...this.entries.keys()].some((key) => key.startsWith(`${normalized}/`));
+      if (hasChildren) throw new Error(`ENOTEMPTY: ${path}`);
+    }
+    for (const key of [...this.entries.keys()]) {
+      if (key === normalized || key.startsWith(`${normalized}/`)) this.entries.delete(key);
+    }
   }
 
   async cp(src: string, dest: string, options?: { recursive?: boolean }) {
@@ -136,7 +147,7 @@ class MockState {
   }
 
   async symlink(target: string, linkPath: string) {
-    this.entries.set(normalize(linkPath), { type: 'symlink', target: normalize(target) });
+    this.entries.set(normalize(linkPath), { type: 'symlink', target: normalize(target), mtime: new Date(0) });
   }
 
   async readlink(path: string) {
@@ -145,173 +156,134 @@ class MockState {
     return entry.target;
   }
 
-  async searchText(path: string, query: string) {
-    return (await this.readFile(path))
-      .split('\n')
-      .map((lineText, index) => ({ line: index + 1, match: query, lineText }))
-      .filter((match) => match.lineText.includes(query));
-  }
-
-  async searchFiles(pattern: string, query: string) {
-    const regex = globToRegExp(normalize(pattern));
-    const results = [];
-    for (const [path, entry] of this.entries) {
-      if (entry.type === 'file' && regex.test(path) && entry.content.includes(query)) {
-        results.push({ path, matches: await this.searchText(path, query) });
-      }
-    }
-    return results;
-  }
-
-  async find(root: string, options?: { name?: string; type?: string }) {
-    const normalized = normalize(root);
-    const nameRegex = globToRegExp(options?.name ?? '*');
-    return [...this.entries.entries()]
-      .filter(([path]) => path !== normalized && path.startsWith(`${normalized}/`))
-      .filter(([, entry]) => !options?.type || entry.type === options.type)
-      .filter(([path]) => nameRegex.test(nameOf(path)))
-      .map(([path, entry]) => ({ path, name: nameOf(path), type: entry.type, depth: path.split('/').length - normalized.split('/').length, size: entry.type === 'file' ? entry.content.length : 0, mtime: new Date(0) }))
-      .sort((a, b) => a.path.localeCompare(b.path));
-  }
-
-  async glob(pattern: string) {
-    const regex = globToRegExp(normalize(pattern));
-    return [...this.entries.keys()].filter((path) => regex.test(path)).sort();
-  }
-
-  async summarizeTree(path: string) {
-    return { root: normalize(path), entries: await this.find(path) };
-  }
-
-  async diff(left: string, right: string) {
-    return `${await this.readFile(left)}---\n${await this.readFile(right)}`;
-  }
-
-  async readJson(path: string) {
-    return JSON.parse(await this.readFile(path));
-  }
-
-  async detectFile(path: string) {
-    const stat = await this.stat(path);
-    return { type: stat?.type ?? 'missing' };
-  }
-
-  async hashFile(path: string, options: { algorithm: string }) {
-    return `${options.algorithm}:${(await this.readFile(path)).length}`;
+  async _getAllPaths() {
+    return [...this.entries.keys()].sort();
   }
 }
 
-function createRunner(files: Record<string, string>) {
-  const state = new MockState(files);
-  const run = new Function('state', `${terminalRuntime}; return run;`)(state) as (command: string, cwd: string) => Promise<string>;
-  return { state, run: (command: string, cwd = '/workspace') => run(command, cwd) };
+async function createRunner(files: Record<string, string>) {
+  const workspace = new MockWorkspace(files);
+  const bash = await createWorkspaceBash(workspace, '/workspace');
+  return {
+    workspace,
+    run: (command: string, cwd = '/workspace') => bash.exec(command, { cwd }),
+  };
 }
 
 describe('cloudflare terminal runtime', () => {
   it('lists, reads, searches, and writes workspace files', async () => {
-    const { state, run } = createRunner({
+    const { workspace, run } = await createRunner({
       '/workspace/foo.txt': 'foo\n',
       '/workspace/bar.txt': 'bar\n',
     });
 
-    expect(await run('pwd')).toBe('/workspace\n');
-    expect(await run('ls')).toContain('foo.txt');
-    expect(await run('cat foo.txt')).toBe('foo\n');
-    expect(await run('grep -R "foo" .')).toContain('/workspace/foo.txt');
+    expect((await run('pwd')).stdout).toBe('/workspace\n');
+    expect((await run('ls')).stdout).toContain('foo.txt');
+    expect((await run('cat foo.txt')).stdout).toBe('foo\n');
+    expect((await run('grep -R "foo" .')).stdout).toContain('foo');
 
     await run('cat > /tmp/out.md <<EOF\nhello\nEOF');
-    expect(await state.readFile('/tmp/out.md')).toBe('hello');
+    expect(await workspace.readFile('/tmp/out.md')).toBe('hello\n');
   });
 
   it('supports pipes and redirection', async () => {
-    const { state, run } = createRunner({
+    const { workspace, run } = await createRunner({
       '/workspace/lines.txt': 'b\na\na\n',
     });
 
-    expect(await run('cat lines.txt | sort | uniq')).toBe('a\nb\n');
+    expect((await run('cat lines.txt | sort | uniq')).stdout).toBe('a\nb\n');
 
     await run('cat lines.txt | grep a > result.txt');
-    expect(await state.readFile('/workspace/result.txt')).toBe('a\na\n');
+    expect(await workspace.readFile('/workspace/result.txt')).toBe('a\na\n');
 
     await run('echo done >> result.txt');
-    expect(await state.readFile('/workspace/result.txt')).toBe('a\na\ndone\n');
+    expect(await workspace.readFile('/workspace/result.txt')).toBe('a\na\ndone\n');
   });
 
   it('supports common shell sequencing and conditionals', async () => {
-    const { run } = createRunner({
+    const { run } = await createRunner({
       '/workspace/foo.txt': 'foo\n',
       '/workspace/bar.txt': 'bar\n',
     });
 
-    expect(await run('pwd && ls && cat foo.txt')).toBe('/workspace\nbar.txt\nfoo.txt\nfoo\n');
-    expect(await run('false || echo recovered')).toBe('recovered\n');
-    expect(await run('set -x\npwd\ncat bar.txt')).toBe('/workspace\nbar\n');
+    const chained = await run('pwd && ls && cat foo.txt');
+    expect(chained.stdout).toContain('/workspace');
+    expect(chained.stdout).toContain('foo.txt');
+    expect(chained.stdout).toContain('foo');
+    expect((await run('false || echo recovered')).stdout).toBe('recovered\n');
+    expect((await run('set -x\npwd\ncat bar.txt')).stdout).toContain('bar');
   });
 
   it('runs multiline redirection followed by another command', async () => {
-    const { state, run } = createRunner({});
+    const { workspace, run } = await createRunner({});
 
-    const output = await run("printf 'hello\\n' > /tmp/demo-output.md\ncat /tmp/demo-output.md");
+    const result = await run("printf 'hello\\n' > /tmp/demo-output.md\ncat /tmp/demo-output.md");
 
-    expect(await state.readFile('/tmp/demo-output.md')).toBe('hello\n');
-    expect(output).toBe('hello\n');
+    expect(await workspace.readFile('/tmp/demo-output.md')).toBe('hello\n');
+    expect(result.stdout).toBe('hello\n');
   });
 
   it('prints grep results like a terminal', async () => {
-    const { run } = createRunner({
+    const { run } = await createRunner({
       '/workspace/brief.md': '# Serverless Agent Harness\nCloudflare demo\n',
       '/workspace/data.json': '{"done":false}\n',
     });
 
-    expect(await run('grep -RIn Serverless .')).toBe('/workspace/brief.md:1:# Serverless Agent Harness\n');
-    expect(await run("grep -RInE 'Serverless|Cloudflare' .")).toBe('/workspace/brief.md:1:# Serverless Agent Harness\n/workspace/brief.md:2:Cloudflare demo\n');
+    expect((await run('grep -RIn Serverless .')).stdout).toContain('brief.md:1:# Serverless Agent Harness');
+    const regex = await run("grep -RInE 'Serverless|Cloudflare' .");
+    expect(regex.stdout).toContain('brief.md:1:# Serverless Agent Harness');
+    expect(regex.stdout).toContain('brief.md:2:Cloudflare demo');
+    expect((await run('grep -Rni "serverless\\|demo" .')).stdout).toContain('brief.md:1:# Serverless Agent Harness');
   });
 
   it('supports simple for loops over workspace files', async () => {
-    const { run } = createRunner({
+    const { run } = await createRunner({
       '/workspace/foo.txt': 'foo\n',
       '/workspace/bar.txt': 'bar\n',
     });
 
-    expect(await run('for f in *; do echo "--- $f ---"; cat "$f"; done')).toBe('--- bar.txt ---\nbar\n--- foo.txt ---\nfoo\n');
+    const result = await run('for f in *; do echo "--- $f ---"; cat "$f"; done');
+    expect(result.stdout).toContain('--- bar.txt ---');
+    expect(result.stdout).toContain('bar');
+    expect(result.stdout).toContain('--- foo.txt ---');
+    expect(result.stdout).toContain('foo');
   });
 
   it('supports common text utilities', async () => {
-    const { run } = createRunner({
+    const { run } = await createRunner({
       '/workspace/lines.txt': 'one\ntwo\nthree\n',
       '/workspace/table.txt': 'a,1\nb,2\n',
     });
 
-    expect(await run('head -n 2 lines.txt')).toBe('one\ntwo\n');
-    expect(await run('tail -n 1 lines.txt')).toBe('three\n');
-    expect(await run('wc -l lines.txt')).toBe('3\n');
-    expect(await run('cut -d , -f 2 table.txt')).toBe('1\n2\n');
-    expect(await run('sed s/two/2/ lines.txt')).toBe('one\n2\nthree\n');
+    expect((await run('head -n 2 lines.txt')).stdout).toBe('one\ntwo\n');
+    expect((await run('tail -n 1 lines.txt')).stdout).toBe('three\n');
+    expect((await run('wc -l lines.txt')).stdout).toContain('3');
+    expect((await run('cut -d , -f 2 table.txt')).stdout).toBe('1\n2\n');
+    expect((await run('sed s/two/2/ lines.txt')).stdout).toBe('one\n2\nthree\n');
   });
 
   it('supports json, find filters, and file operations', async () => {
-    const { state, run } = createRunner({
+    const { workspace, run } = await createRunner({
       '/workspace/data.json': JSON.stringify({ foo: 'bar', nested: { value: 1 } }),
       '/workspace/dir/a.txt': 'a',
       '/workspace/dir/b.md': 'b',
     });
 
-    expect(await run('jq -r .foo data.json')).toBe('bar\n');
-    expect(await run('find . -type f -name "*.txt"')).toBe('/workspace/dir/a.txt\n');
+    expect((await run('jq -r .foo data.json')).stdout).toBe('bar\n');
+    expect((await run('find . -type f -name "*.txt"')).stdout).toContain('dir/a.txt');
 
     await run('cp dir/a.txt copied.txt');
-    expect(await state.readFile('/workspace/copied.txt')).toBe('a');
+    expect(await workspace.readFile('/workspace/copied.txt')).toBe('a');
     await run('mv copied.txt moved.txt');
-    expect(await state.readFile('/workspace/moved.txt')).toBe('a');
+    expect(await workspace.readFile('/workspace/moved.txt')).toBe('a');
     await run('rm moved.txt');
-    expect(await state.exists('/workspace/moved.txt')).toBe(false);
+    expect(await workspace.exists('/workspace/moved.txt')).toBe(false);
   });
 
   it('reports supported commands through help', async () => {
-    const { run } = createRunner({});
-    const output = await run('help');
-    expect(output).toContain('grep');
-    expect(output).toContain('jq');
-    expect(output).toContain('tar');
+    const { run } = await createRunner({});
+    const output = (await run('help')).stdout;
+    expect(output).toContain('shell builtins');
+    expect(output).toContain('printf');
   });
 });

@@ -1,8 +1,8 @@
 # Flue Serverless Coding Agent Demo
 
-This is a small Flue agent that demonstrates a serverless coding-agent-style harness backed by `@cloudflare/shell` instead of a container sandbox.
+This is a small Flue agent that demonstrates a serverless coding-agent-style harness backed by `just-bash` and `@cloudflare/shell` instead of a container sandbox.
 
-Flue owns the programmable TypeScript harness, while `@cloudflare/shell` provides a durable Workspace filesystem and Dynamic Worker execution. A small adapter gives the agent a familiar bash-like command surface. The demo is customer-neutral and does not name any prospect.
+Flue owns the programmable TypeScript harness, `just-bash` provides bash-like terminal semantics, and `@cloudflare/shell` provides a durable Workspace filesystem. A small adapter connects the shell to the Cloudflare-native workspace. The demo is customer-neutral and does not name any prospect.
 
 ## What It Shows
 
@@ -10,7 +10,7 @@ Flue owns the programmable TypeScript harness, while `@cloudflare/shell` provide
 - A Flue harness running in a Cloudflare Durable Object, so no container is required.
 - A durable `@cloudflare/shell` Workspace for scratch files and generated artifacts.
 - Familiar terminal commands like `pwd`, `ls`, `cat`, `grep`, and shell redirection through the agent's `bash` tool.
-- Terminal commands passed to `bash` execute inside a Cloudflare Dynamic Worker; the demo intentionally exposes only `bash` so the work trace looks like a terminal session.
+- Terminal commands passed to `bash` are interpreted by `just-bash` against a durable Cloudflare Workspace; the demo intentionally exposes only `bash` so the work trace looks like a terminal session.
 - Cloudflare AI Gateway through the Workers AI binding with gateway id `default`.
 - Host-controlled setup through TypeScript before the model runs.
 - Structured output proving which commands ran and which files were inspected and changed.
@@ -91,7 +91,7 @@ npm run deploy
 
 The point is that the agent harness can remain programmable and runtime-agnostic while the filesystem and command layer can be serverless, durable, and non-containerized.
 
-The agent gets a familiar coding-agent surface: it can run commands like `ls`, `cat foo.txt`, `grep -R "foo" /workspace`, and `cat > /tmp/demo-output.md <<'EOF'`. The adapter runs those commands in a Cloudflare Dynamic Worker and maps file operations onto `@cloudflare/shell` Workspace APIs instead of starting a Linux container. `/tmp/demo-output.md` is the scratch file that proves the agent can write to its filesystem-like workspace.
+The agent gets a familiar coding-agent surface: it can run commands like `ls`, `cat foo.txt`, `grep -R "foo" /workspace`, and `cat > /tmp/demo-output.md <<'EOF'`. `just-bash` handles shell parsing and command behavior, while the adapter maps file operations onto `@cloudflare/shell` Workspace APIs instead of starting a Linux container. `/tmp/demo-output.md` is the scratch file that proves the agent can write to its filesystem-like workspace.
 
 Model traffic uses Cloudflare AI Gateway through the Workers AI binding:
 
@@ -132,6 +132,6 @@ const harness = await init({
 });
 ```
 
-The verbose part lives in `lib/cloudflare-terminal.ts`. That file is the reusable layer that turns Flue's normal `bash` tool into Dynamic Worker executions backed by `@cloudflare/shell`.
+The verbose part lives in `lib/cloudflare-terminal.ts`. That file is the reusable layer that turns Flue's normal `bash` tool into `just-bash` executions backed by `@cloudflare/shell`.
 
 The adapter intentionally mirrors a large part of the `just-bash` command surface. Run `help` through the agent's `bash` tool to list supported commands. Current coverage includes filesystem commands (`cat`, `cp`, `mv`, `mkdir`, `rm`, `find`, `stat`, `tree`), search (`grep`, `rg`), text utilities (`head`, `tail`, `wc`, `sort`, `uniq`, `sed`, `cut`), JSON basics (`jq`), hashes, archive/compression helpers, pipes, and `>`/`>>` redirection.

@@ -59,7 +59,7 @@ export default async function (ctx: FlueContext) {
     agent: 'serverless-coding-demo',
     instance: id,
     runId,
-    runtime: 'Flue harness in a Cloudflare Durable Object with @cloudflare/shell Dynamic Worker terminal execution',
+    runtime: 'Flue harness in a Cloudflare Durable Object with just-bash terminal semantics over a durable @cloudflare/shell Workspace',
     model,
     aiGateway: gateway,
     data,

@@ -1,613 +1,50 @@
-import { DynamicWorkerExecutor, resolveProvider } from '@cloudflare/codemode';
-import { WorkspaceFileSystem, type Workspace } from '@cloudflare/shell';
-import { stateTools } from '@cloudflare/shell/workers';
+import type { Workspace } from '@cloudflare/shell';
 import { createTools, type FileStat, type SandboxFactory, type SessionEnv, type ShellResult } from '@flue/runtime';
+import { Bash, defineCommand, type CommandContext, type CommandName, type CpOptions, type FileContent, type FsStat, type IFileSystem, type MkdirOptions, type RmOptions } from 'just-bash/browser';
+
+type WorkspaceEntry = {
+  path: string;
+  name: string;
+  type: 'file' | 'directory' | 'symlink';
+  size: number;
+  updatedAt?: number;
+  mtime?: Date;
+};
+
+type WorkspaceLike = Pick<Workspace,
+  | 'appendFile'
+  | 'cp'
+  | 'exists'
+  | 'mkdir'
+  | 'mv'
+  | 'readDir'
+  | 'readFile'
+  | 'readFileBytes'
+  | 'readlink'
+  | 'rm'
+  | 'stat'
+  | 'symlink'
+  | 'writeFile'
+  | 'writeFileBytes'
+> & {
+  _getAllPaths?: () => Promise<string[]>;
+  lstat?: (path: string) => Promise<WorkspaceEntry | null>;
+};
 
 type CloudflareTerminalOptions = {
   workspace: Workspace;
-  loader: any;
+  loader: unknown;
   cwd?: string;
 };
 
-export const terminalRuntime = String.raw`
-const SUPPORTED = [
+const allowedCommands: CommandName[] = [
   'base64', 'basename', 'cat', 'chmod', 'clear', 'cp', 'cut', 'date', 'diff',
   'dirname', 'du', 'echo', 'env', 'egrep', 'false', 'fgrep', 'file', 'find',
-  'grep', 'gunzip', 'gzip', 'head', 'help', 'hostname', 'jq', 'ln', 'ls',
-  'md5sum', 'mkdir', 'mv', 'nl', 'printenv', 'printf', 'pwd', 'readlink',
-  'realpath', 'rev', 'rg', 'rm', 'rmdir', 'sed', 'sha1sum', 'sha256sum',
-  'sort', 'stat', 'tail', 'tar', 'tee', 'touch', 'tree', 'true', 'uniq',
-  'wc', 'which', 'whoami', 'zcat'
+  'grep', 'head', 'help', 'hostname', 'jq', 'ln', 'ls', 'md5sum', 'mkdir',
+  'mv', 'nl', 'printenv', 'printf', 'pwd', 'readlink', 'rev', 'rg', 'rm',
+  'rmdir', 'sed', 'sha1sum', 'sha256sum', 'sh', 'sort', 'stat', 'tail', 'tee',
+  'touch', 'tree', 'true', 'uniq', 'wc', 'which', 'whoami',
 ];
-
-function words(command) {
-  return command.match(/"(?:\\.|[^"])*"|'[^']*'|\S+/g)?.map((word) => {
-    const quote = word[0];
-    if ((quote === '"' || quote === "'") && word.endsWith(quote)) return word.slice(1, -1);
-    return word;
-  }) ?? [];
-}
-
-function unquote(value) {
-  const quote = value[0];
-  if ((quote === '"' || quote === "'") && value.endsWith(quote)) return value.slice(1, -1);
-  return value;
-}
-
-function clean(path) {
-  const parts = [];
-  for (const part of path.split('/')) {
-    if (!part || part === '.') continue;
-    if (part === '..') parts.pop();
-    else parts.push(part);
-  }
-  return '/' + parts.join('/');
-}
-
-function pathFor(path, cwd) {
-  if (!path || path === '.') return cwd;
-  if (path.startsWith('/')) return clean(path);
-  return clean(cwd.replace(/\/$/, '') + '/' + path);
-}
-
-function text(value) {
-  return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-}
-
-function splitPipes(command) {
-  const parts = [];
-  let current = '';
-  let quote = '';
-  for (let i = 0; i < command.length; i++) {
-    const ch = command[i];
-    if (quote) {
-      current += ch;
-      if (ch === quote && command[i - 1] !== '\\') quote = '';
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      current += ch;
-      continue;
-    }
-    if (ch === '|' && command[i + 1] === '|') {
-      current += '||';
-      i++;
-      continue;
-    }
-    if (ch === '|') {
-      parts.push(current.trim());
-      current = '';
-      continue;
-    }
-    current += ch;
-  }
-  parts.push(current.trim());
-  return parts.filter(Boolean);
-}
-
-function heredocDelimiterFrom(line) {
-  return line.match(/<<-?['"]?(\w+)['"]?/)?.[1];
-}
-
-function insideForBlock(command) {
-  const trimmed = command.trim();
-  return /^for\s+\w+\s+in\s+/s.test(trimmed) && !/\bdone\s*$/s.test(trimmed);
-}
-
-function splitCommands(command) {
-  const commands = [];
-  let current = '';
-  let currentLine = '';
-  let quote = '';
-  let heredocDelimiter = '';
-
-  const flush = (next) => {
-    const trimmed = current.trim();
-    if (trimmed) commands.push({ command: trimmed, next });
-    current = '';
-    currentLine = '';
-  };
-
-  for (let i = 0; i < command.length; i++) {
-    const ch = command[i];
-
-    if (quote) {
-      current += ch;
-      currentLine += ch;
-      if (ch === quote && command[i - 1] !== '\\') quote = '';
-      continue;
-    }
-
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      current += ch;
-      currentLine += ch;
-      continue;
-    }
-
-    if (ch === '\n') {
-      const line = currentLine;
-      current += ch;
-      if (heredocDelimiter) {
-        if (line.trim() === heredocDelimiter) {
-          heredocDelimiter = '';
-          flush(';');
-        } else {
-          currentLine = '';
-        }
-        continue;
-      }
-
-      const marker = heredocDelimiterFrom(line);
-      if (marker) {
-        heredocDelimiter = marker;
-        currentLine = '';
-        continue;
-      }
-
-      if (insideForBlock(current)) {
-        currentLine = '';
-        continue;
-      }
-
-      flush(';');
-      continue;
-    }
-
-    if (!heredocDelimiter && !insideForBlock(current)) {
-      if (ch === '&' && command[i + 1] === '&') {
-        flush('&&');
-        i++;
-        continue;
-      }
-      if (ch === '|' && command[i + 1] === '|') {
-        flush('||');
-        i++;
-        continue;
-      }
-      if (ch === ';') {
-        flush(';');
-        continue;
-      }
-    }
-
-    current += ch;
-    currentLine += ch;
-  }
-
-  flush(';');
-  return commands;
-}
-
-function findRedirection(command) {
-  let quote = '';
-  for (let i = command.length - 1; i >= 0; i--) {
-    const ch = command[i];
-    if (quote) {
-      if (ch === quote && command[i - 1] !== '\\') quote = '';
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === '>') {
-      const append = command[i - 1] === '>';
-      const left = command.slice(0, append ? i - 1 : i).trim();
-      const right = command.slice(i + 1).trim();
-      if (!left || !right || right.includes(' ')) return null;
-      return { left, append, path: unquote(right) };
-    }
-  }
-  return null;
-}
-
-function optionless(args) {
-  return args.filter((arg) => !arg.startsWith('-'));
-}
-
-function lines(input) {
-  if (!input) return [];
-  const out = input.split('\n');
-  if (out.at(-1) === '') out.pop();
-  return out;
-}
-
-function withNewline(value) {
-  return value.endsWith('\n') ? value : value + '\n';
-}
-
-async function readInputs(args, cwd, stdin) {
-  const files = optionless(args);
-  if (files.length === 0) return stdin ?? '';
-  let out = '';
-  for (const file of files) out += await state.readFile(pathFor(file, cwd));
-  return out;
-}
-
-function parseNumberFlag(args, flag, fallback) {
-  const index = args.indexOf(flag);
-  if (index >= 0 && args[index + 1]) return Number(args[index + 1]);
-  const compact = args.find((arg) => arg.startsWith(flag) && arg.length > flag.length);
-  if (compact) return Number(compact.slice(flag.length));
-  return fallback;
-}
-
-function removeFlagValue(args, flag) {
-  const out = [];
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === flag) {
-      i++;
-      continue;
-    }
-    if (arg.startsWith(flag) && arg.length > flag.length) continue;
-    out.push(arg);
-  }
-  return out;
-}
-
-function basename(path) {
-  const cleaned = clean(path).replace(/\/$/, '');
-  return cleaned.split('/').pop() || '/';
-}
-
-function dirname(path) {
-  const cleaned = clean(path).replace(/\/$/, '');
-  const index = cleaned.lastIndexOf('/');
-  return index <= 0 ? '/' : cleaned.slice(0, index);
-}
-
-function simpleHashPlaceholder(algorithm, value) {
-  return algorithm + ':' + value.length.toString(16);
-}
-
-async function runPipeline(command, cwd) {
-  const parts = splitPipes(command);
-  let input;
-  for (const part of parts) input = await runArgv(words(part), cwd, input);
-  return input ?? '';
-}
-
-async function run(command, cwd) {
-  return await runSequence(command, cwd);
-}
-
-async function runSequence(command, cwd) {
-  const commands = splitCommands(command);
-  let output = '';
-  let previousOk = true;
-  let previousNext = ';';
-  let lastError;
-
-  for (const entry of commands) {
-    const shouldRun = previousNext === '&&' ? previousOk : previousNext === '||' ? !previousOk : true;
-    if (!shouldRun) {
-      previousNext = entry.next;
-      continue;
-    }
-
-    try {
-      output += await runSingle(entry.command, cwd);
-      previousOk = true;
-      lastError = undefined;
-    } catch (error) {
-      previousOk = false;
-      lastError = error;
-    }
-    previousNext = entry.next;
-  }
-
-  if (!previousOk && lastError) throw lastError;
-  return output;
-}
-
-async function runSingle(command, cwd) {
-  const trimmed = command.trim();
-  const heredocAfterPath = trimmed.match(/^cat\s+>\s+(\S+)\s+<<['"]?(\w+)['"]?\n([\s\S]*)\n\2\s*$/);
-  if (heredocAfterPath) {
-    const [, rawPath, , content] = heredocAfterPath;
-    const path = pathFor(rawPath, cwd);
-    await state.writeFile(path, content ?? '');
-    return 'wrote ' + path + '\n';
-  }
-
-  const heredocBeforePath = trimmed.match(/^cat\s+<<['"]?(\w+)['"]?\s+>\s+(\S+)\n([\s\S]*)\n\1\s*$/);
-  if (heredocBeforePath) {
-    const [, , rawPath, content] = heredocBeforePath;
-    const path = pathFor(rawPath, cwd);
-    await state.writeFile(path, content ?? '');
-    return 'wrote ' + path + '\n';
-  }
-
-  const redirection = findRedirection(trimmed);
-  if (redirection) {
-    const path = pathFor(redirection.path, cwd);
-    const output = await runPipeline(redirection.left, cwd);
-    if (redirection.append) await state.appendFile(path, output);
-    else await state.writeFile(path, output);
-    return '';
-  }
-
-  return await runPipeline(trimmed, cwd);
-}
-
-async function runForLoop(command, cwd) {
-  const match = command.match(/^for\s+(\w+)\s+in\s+([\s\S]+?)\s*;\s*do\s+([\s\S]*)\s*;\s*done\s*$/);
-  if (!match) throw new Error('Unsupported for loop syntax');
-  const [, variable, rawValues, body] = match;
-  const values = await expandForValues(words(rawValues), cwd);
-  let output = '';
-  for (const value of values) {
-    const substituted = body
-      .replaceAll('${' + variable + '}', value)
-      .replaceAll('$' + variable, value);
-    output += await runSequence(substituted, cwd);
-  }
-  return output;
-}
-
-async function expandForValues(values, cwd) {
-  const out = [];
-  for (const value of values) {
-    if (value.includes('*')) {
-      const matches = await state.glob(pathFor(value, cwd));
-      out.push(...matches.map((path) => path.startsWith(cwd + '/') ? path.slice(cwd.length + 1) : path));
-    } else {
-      out.push(value);
-    }
-  }
-  return out;
-}
-
-async function grepOutput(program, args, cwd, stdin) {
-  const flags = args.filter((arg) => arg.startsWith('-')).join('');
-  const positional = args.filter((arg) => !arg.startsWith('-'));
-  const query = positional[0] ?? '';
-  const targets = positional.slice(1);
-  const regexMode = program === 'egrep' || program === 'rg' || flags.includes('E');
-  const ignoreCase = flags.includes('i');
-
-  if (targets.length === 0 && stdin !== undefined) {
-    return lines(stdin).filter((line) => matchesGrep(line, query, regexMode, ignoreCase)).join('\n') + '\n';
-  }
-
-  const files = [];
-  for (const rawTarget of targets.length > 0 ? targets : ['.']) {
-    const target = pathFor(rawTarget, cwd);
-    const stat = await state.stat(target);
-    if (stat?.type === 'file') {
-      files.push(target);
-      continue;
-    }
-    if (stat?.type === 'directory') {
-      files.push(...(await state.find(target, { type: 'file' })).map((entry) => entry.path));
-      continue;
-    }
-    throw new Error('No such file or directory: ' + rawTarget);
-  }
-
-  const out = [];
-  for (const file of files.sort()) {
-    const fileLines = lines(await state.readFile(file));
-    for (let i = 0; i < fileLines.length; i++) {
-      if (matchesGrep(fileLines[i], query, regexMode, ignoreCase)) out.push(file + ':' + (i + 1) + ':' + fileLines[i]);
-    }
-  }
-  return out.length > 0 ? out.join('\n') + '\n' : '';
-}
-
-function matchesGrep(line, query, regexMode, ignoreCase) {
-  if (regexMode) return new RegExp(query, ignoreCase ? 'i' : '').test(line);
-  const haystack = ignoreCase ? line.toLowerCase() : line;
-  const needle = ignoreCase ? query.toLowerCase() : query;
-  return haystack.includes(needle);
-}
-
-async function runArgv(argv, cwd, stdin) {
-  const [program, ...args] = argv;
-  if (!program) return '';
-  if (program === 'for') return await runForLoop(argv.join(' '), cwd);
-  if (program === 'pwd') return cwd + '\n';
-
-  if (program === 'help') return 'Supported commands: ' + SUPPORTED.join(', ') + '\n';
-  if (program === 'which') return args.map((arg) => SUPPORTED.includes(arg) ? '/bin/' + arg : '').filter(Boolean).join('\n') + '\n';
-  if (program === 'set') return '';
-  if (program === 'true') return '';
-  if (program === 'false') throw new Error('false');
-  if (program === 'clear') return '';
-  if (program === 'date') return new Date().toISOString() + '\n';
-  if (program === 'hostname') return 'dynamic-worker\n';
-  if (program === 'whoami') return 'agent\n';
-  if (program === 'env' || program === 'printenv') return 'PWD=' + cwd + '\nHOME=/workspace\n';
-
-  if (program === 'echo') return args.filter((arg) => arg !== '-n').join(' ') + (args.includes('-n') ? '' : '\n');
-  if (program === 'printf') return args.join(' ').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
-
-  if (program === 'basename') return basename(args[0] ?? cwd) + '\n';
-  if (program === 'dirname') return dirname(args[0] ?? cwd) + '\n';
-  if (program === 'realpath') return pathFor(args[0], cwd) + '\n';
-
-  if (program === 'ls') {
-    const target = args.filter((arg) => !arg.startsWith('-')).at(-1);
-    return (await state.readdir(pathFor(target, cwd))).join('\n') + '\n';
-  }
-
-  if (program === 'tree') return text(await state.summarizeTree(pathFor(args.at(-1), cwd), { maxDepth: 4 })) + '\n';
-  if (program === 'cat') return await readInputs(args, cwd, stdin);
-
-  if (program === 'head') {
-    const count = parseNumberFlag(args, '-n', 10);
-    return lines(await readInputs(removeFlagValue(args, '-n'), cwd, stdin)).slice(0, count).join('\n') + '\n';
-  }
-
-  if (program === 'tail') {
-    const count = parseNumberFlag(args, '-n', 10);
-    return lines(await readInputs(removeFlagValue(args, '-n'), cwd, stdin)).slice(-count).join('\n') + '\n';
-  }
-
-  if (program === 'wc') {
-    const input = await readInputs(args, cwd, stdin);
-    const lineCount = lines(input).length;
-    const wordCount = input.trim() ? input.trim().split(/\s+/).length : 0;
-    const byteCount = new TextEncoder().encode(input).length;
-    if (args.includes('-l')) return lineCount + '\n';
-    if (args.includes('-w')) return wordCount + '\n';
-    if (args.includes('-c')) return byteCount + '\n';
-    return lineCount + ' ' + wordCount + ' ' + byteCount + '\n';
-  }
-
-  if (program === 'sort') return lines(await readInputs(args, cwd, stdin)).sort().join('\n') + '\n';
-  if (program === 'uniq') return lines(await readInputs(args, cwd, stdin)).filter((line, i, arr) => i === 0 || line !== arr[i - 1]).join('\n') + '\n';
-  if (program === 'nl') return lines(await readInputs(args, cwd, stdin)).map((line, i) => String(i + 1).padStart(6) + '\t' + line).join('\n') + '\n';
-  if (program === 'rev') return lines(await readInputs(args, cwd, stdin)).map((line) => [...line].reverse().join('')).join('\n') + '\n';
-
-  if (program === 'base64') {
-    const input = await readInputs(args.filter((arg) => arg !== '-d' && arg !== '--decode'), cwd, stdin);
-    if (args.includes('-d') || args.includes('--decode')) return atob(input.trim()) + '\n';
-    return btoa(input) + '\n';
-  }
-
-  if (program === 'cut') {
-    const delimiterIndex = args.indexOf('-d');
-    const fieldIndex = args.indexOf('-f');
-    const delimiter = delimiterIndex >= 0 ? args[delimiterIndex + 1] : '\t';
-    const field = fieldIndex >= 0 ? Number(args[fieldIndex + 1]) - 1 : 0;
-    const inputArgs = args.filter((arg, i) => !['-d', '-f'].includes(arg) && i !== delimiterIndex + 1 && i !== fieldIndex + 1);
-    return lines(await readInputs(inputArgs, cwd, stdin)).map((line) => line.split(delimiter)[field] ?? '').join('\n') + '\n';
-  }
-
-  if (program === 'sed') {
-    const script = args.find((arg) => arg.startsWith('s')) ?? '';
-    const match = script.match(/^s(.)([\s\S]*)\1([\s\S]*)\1(g?)$/);
-    if (!match) throw new Error('Only sed s/search/replace/[g] is supported');
-    const [, , search, replacement, global] = match;
-    const inputArgs = args.filter((arg) => arg !== script);
-    const input = await readInputs(inputArgs, cwd, stdin);
-    return input.replace(new RegExp(search, global ? 'g' : ''), replacement);
-  }
-
-  if (program === 'jq') {
-    const raw = args.includes('-r');
-    const query = args.find((arg) => !arg.startsWith('-')) ?? '.';
-    const file = args.filter((arg) => !arg.startsWith('-')).find((arg) => arg !== query);
-    let value = file ? await state.readJson(pathFor(file, cwd)) : JSON.parse(stdin ?? 'null');
-    if (query !== '.') {
-      for (const part of query.replace(/^\./, '').split('.').filter(Boolean)) value = value?.[part];
-    }
-    return (raw && typeof value === 'string' ? value : JSON.stringify(value, null, 2)) + '\n';
-  }
-
-  if (program === 'mkdir') {
-    const target = args.filter((arg) => !arg.startsWith('-')).at(-1);
-    const path = pathFor(target, cwd);
-    await state.mkdir(path, { recursive: args.includes('-p') });
-    return 'created ' + path + '\n';
-  }
-
-  if (program === 'cp') {
-    const positional = optionless(args);
-    const [src, dest] = positional.map((arg) => pathFor(arg, cwd));
-    await state.cp(src, dest, { recursive: args.some((arg) => arg.includes('r') || arg.includes('R')) });
-    return '';
-  }
-
-  if (program === 'mv') {
-    const positional = optionless(args);
-    const [src, dest] = positional.map((arg) => pathFor(arg, cwd));
-    await state.mv(src, dest);
-    return '';
-  }
-
-  if (program === 'ln') {
-    if (!args.includes('-s')) throw new Error('Only ln -s is supported');
-    const positional = optionless(args);
-    await state.symlink(pathFor(positional[0], cwd), pathFor(positional[1], cwd));
-    return '';
-  }
-
-  if (program === 'readlink') return await state.readlink(pathFor(args.at(-1), cwd)) + '\n';
-
-  if (program === 'touch') {
-    const path = pathFor(args[0], cwd);
-    await state.writeFile(path, (await state.exists(path)) ? await state.readFile(path) : '');
-    return 'touched ' + path + '\n';
-  }
-
-  if (program === 'rm') {
-    const target = args.filter((arg) => !arg.startsWith('-')).at(-1);
-    const path = pathFor(target, cwd);
-    await state.rm(path, {
-      force: args.some((arg) => arg.includes('f')),
-      recursive: args.some((arg) => arg.includes('r')),
-    });
-    return 'removed ' + path + '\n';
-  }
-
-  if (program === 'rmdir') {
-    await state.rm(pathFor(args[0], cwd), { recursive: false });
-    return '';
-  }
-
-  if (program === 'chmod') return '';
-
-  if (program === 'stat') return text(await state.stat(pathFor(args.at(-1), cwd))) + '\n';
-  if (program === 'file') return text(await state.detectFile(pathFor(args.at(-1), cwd))) + '\n';
-  if (program === 'du') return text(await state.summarizeTree(pathFor(args.at(-1), cwd), { maxDepth: 8 })) + '\n';
-
-  if (program === 'grep' || program === 'egrep' || program === 'fgrep' || program === 'rg') {
-    return await grepOutput(program, args, cwd, stdin);
-  }
-
-  if (program === 'find') {
-    const root = pathFor(args.find((arg) => !arg.startsWith('-') && arg !== 'f') ?? '.', cwd);
-    const nameIndex = args.indexOf('-name');
-    const namePattern = nameIndex >= 0 ? args[nameIndex + 1] : '*';
-    const typeIndex = args.indexOf('-type');
-    const type = typeIndex >= 0 && args[typeIndex + 1] === 'f' ? 'file' : typeIndex >= 0 && args[typeIndex + 1] === 'd' ? 'directory' : undefined;
-    return (await state.find(root, { name: namePattern ?? '*', type })).map((entry) => entry.path).join('\n') + '\n';
-  }
-
-  if (program === 'diff') {
-    const [left, right] = args.map((arg) => pathFor(arg, cwd));
-    return await state.diff(left, right);
-  }
-
-  if (program === 'tee') {
-    const input = stdin ?? '';
-    for (const target of optionless(args)) {
-      if (args.includes('-a')) await state.appendFile(pathFor(target, cwd), input);
-      else await state.writeFile(pathFor(target, cwd), input);
-    }
-    return input;
-  }
-
-  if (program === 'sha256sum' || program === 'sha1sum' || program === 'md5sum') {
-    const algorithm = program.replace('sum', '').toUpperCase().replace('SHA', 'SHA-');
-    const target = args[0];
-    if (!target && stdin !== undefined) return simpleHashPlaceholder(algorithm, stdin) + '  -\n';
-    return await state.hashFile(pathFor(target, cwd), { algorithm }) + '  ' + target + '\n';
-  }
-
-  if (program === 'tar') {
-    if (args.includes('-tf')) return text(await state.listArchive(pathFor(args.at(-1), cwd))) + '\n';
-    if (args.includes('-xf')) return text(await state.extractArchive(pathFor(args.at(-1), cwd), cwd)) + '\n';
-    const fileIndex = args.indexOf('-cf');
-    if (fileIndex >= 0) {
-      const archive = pathFor(args[fileIndex + 1], cwd);
-      const sources = args.slice(fileIndex + 2).map((arg) => pathFor(arg, cwd));
-      return text(await state.createArchive(archive, sources)) + '\n';
-    }
-  }
-
-  if (program === 'gzip') return text(await state.compressFile(pathFor(args.at(-1), cwd))) + '\n';
-  if (program === 'gunzip') return text(await state.decompressFile(pathFor(args.at(-1), cwd))) + '\n';
-  if (program === 'zcat') return await state.readFile(pathFor(args.at(-1), cwd));
-
-  throw new Error('Unsupported command: ' + program + '. Run help for supported commands.');
-}
-`;
 
 function normalize(path: string) {
   const parts: string[] = [];
@@ -619,64 +56,377 @@ function normalize(path: string) {
   return `/${parts.join('/')}`;
 }
 
-function adaptStat(stat: Awaited<ReturnType<WorkspaceFileSystem['stat']>>): FileStat {
+function parentOf(path: string) {
+  const normalized = normalize(path);
+  const index = normalized.lastIndexOf('/');
+  return index <= 0 ? '/' : normalized.slice(0, index);
+}
+
+function nameOf(path: string) {
+  return normalize(path).split('/').pop() || '/';
+}
+
+function bytesFromLatin1(value: string) {
+  const bytes = new Uint8Array(value.length);
+  for (let i = 0; i < value.length; i++) bytes[i] = value.charCodeAt(i) & 0xff;
+  return bytes;
+}
+
+function textFromBytes(value: Uint8Array) {
+  return new TextDecoder().decode(value);
+}
+
+function encodeContent(content: FileContent, options?: unknown) {
+  if (content instanceof Uint8Array) return content;
+  if (options === 'binary' || (typeof options === 'object' && options && (options as { encoding?: unknown }).encoding === 'binary')) {
+    return bytesFromLatin1(content);
+  }
+  return content;
+}
+
+function enoent(path: string) {
+  return new Error(`ENOENT: no such file or directory, ${path}`);
+}
+
+function enotdir(path: string) {
+  return new Error(`ENOTDIR: not a directory, ${path}`);
+}
+
+function eexist(path: string) {
+  return new Error(`EEXIST: file already exists, ${path}`);
+}
+
+function statFrom(entry: WorkspaceEntry): FsStat {
   return {
-    isFile: stat.type === 'file',
-    isDirectory: stat.type === 'directory',
-    isSymbolicLink: stat.type === 'symlink',
-    size: stat.size,
-    mtime: stat.mtime,
+    isFile: entry.type === 'file',
+    isDirectory: entry.type === 'directory',
+    isSymbolicLink: entry.type === 'symlink',
+    mode: entry.type === 'directory' ? 0o755 : entry.type === 'symlink' ? 0o777 : 0o644,
+    size: entry.size,
+    mtime: entry.mtime ?? new Date(entry.updatedAt ?? 0),
   };
 }
 
-function formatResult(value: unknown) {
-  return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+function parseGrepArgs(commandName: string, args: string[]) {
+  const flags = new Set(commandName === 'rg' ? ['R', 'n'] : []);
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] ?? '';
+    if (arg === '--') {
+      positional.push(...args.slice(i + 1));
+      break;
+    }
+    if (arg.startsWith('-') && arg.length > 1) {
+      for (const flag of arg.slice(1)) flags.add(flag);
+      continue;
+    }
+    positional.push(arg);
+  }
+  return {
+    flags,
+    pattern: positional[0] ?? '',
+    targets: positional.slice(1),
+  };
 }
 
-export function cloudflareTerminalSandbox({ workspace, loader, cwd = '/' }: CloudflareTerminalOptions): SandboxFactory {
-  const fs = new WorkspaceFileSystem(workspace);
-  const executor = new DynamicWorkerExecutor({ loader });
-  const stateProvider = resolveProvider(stateTools(workspace));
+function grepMatches(line: string, pattern: string, flags: Set<string>, fixed: boolean) {
+  if (fixed) {
+    const haystack = flags.has('i') ? line.toLowerCase() : line;
+    const needle = flags.has('i') ? pattern.toLowerCase() : pattern;
+    return haystack.includes(needle);
+  }
+  if (flags.has('E') || pattern.includes('|') || pattern.includes('\\|')) {
+    const regexPattern = pattern.replaceAll('\\|', '|');
+    return new RegExp(regexPattern, flags.has('i') ? 'i' : '').test(line);
+  }
+  const haystack = flags.has('i') ? line.toLowerCase() : line;
+  const needle = flags.has('i') ? pattern.toLowerCase() : pattern;
+  return haystack.includes(needle);
+}
+
+async function grepFiles(ctx: CommandContext, path: string, recursive: boolean): Promise<string[]> {
+  const resolved = ctx.fs.resolvePath(ctx.cwd, path);
+  const stat = await ctx.fs.stat(resolved);
+  if (stat.isFile) return [resolved];
+  if (!stat.isDirectory) return [];
+  if (!recursive) throw new Error(`grep: ${path}: Is a directory`);
+  const files: string[] = [];
+  for (const entry of await ctx.fs.readdir(resolved)) {
+    files.push(...await grepFiles(ctx, `${resolved}/${entry}`, recursive));
+  }
+  return files;
+}
+
+function createGrepCommand(name: 'grep' | 'egrep' | 'fgrep' | 'rg') {
+  return defineCommand(name, async (args, ctx) => {
+    const { flags, pattern, targets } = parseGrepArgs(name, args);
+    const recursive = flags.has('R') || flags.has('r');
+    const fixed = name === 'fgrep' || flags.has('F');
+    const lineNumbers = flags.has('n');
+    const out: string[] = [];
+
+    if (targets.length === 0) {
+      for (const [index, line] of ctx.stdin.split('\n').entries()) {
+        if (grepMatches(line, pattern, flags, fixed)) out.push(lineNumbers ? `${index + 1}:${line}` : line);
+      }
+      return { stdout: out.length > 0 ? `${out.join('\n')}\n` : '', stderr: '', exitCode: out.length > 0 ? 0 : 1 };
+    }
+
+    const files = (await Promise.all(targets.map((target) => grepFiles(ctx, target, recursive)))).flat().sort();
+    const prefixFile = recursive || files.length > 1;
+    for (const file of files) {
+      const content = await ctx.fs.readFile(file);
+      for (const [index, line] of content.split('\n').entries()) {
+        if (!grepMatches(line, pattern, flags, fixed)) continue;
+        const parts = [];
+        if (prefixFile) parts.push(file);
+        if (lineNumbers) parts.push(String(index + 1));
+        parts.push(line);
+        out.push(parts.join(':'));
+      }
+    }
+    return { stdout: out.length > 0 ? `${out.join('\n')}\n` : '', stderr: '', exitCode: out.length > 0 ? 0 : 1 };
+  });
+}
+
+function adaptFlueStat(stat: Awaited<ReturnType<SessionEnv['stat']>>): FileStat {
+  return stat;
+}
+
+export class WorkspaceBackedFileSystem implements IFileSystem {
+  private knownPaths = new Set<string>(['/']);
+
+  constructor(private workspace: WorkspaceLike) {}
+
+  async refresh(): Promise<void> {
+    this.knownPaths = new Set<string>(['/']);
+    if (this.workspace._getAllPaths) {
+      for (const path of await this.workspace._getAllPaths()) this.knownPaths.add(normalize(path));
+      for (const path of [...this.knownPaths]) this.addParents(path);
+      return;
+    }
+    await this.refreshDir('/');
+  }
+
+  async readFile(path: string): Promise<string> {
+    const resolved = normalize(path);
+    const content = await this.workspace.readFile(resolved);
+    if (content === null) throw enoent(resolved);
+    return content;
+  }
+
+  async readFileBuffer(path: string): Promise<Uint8Array> {
+    const resolved = normalize(path);
+    const content = await this.workspace.readFileBytes(resolved);
+    if (content === null) throw enoent(resolved);
+    return content;
+  }
+
+  async writeFile(path: string, content: FileContent, options?: unknown): Promise<void> {
+    const resolved = normalize(path);
+    await this.workspace.mkdir(parentOf(resolved), { recursive: true });
+    const encoded = encodeContent(content, options);
+    if (encoded instanceof Uint8Array) await this.workspace.writeFileBytes(resolved, encoded);
+    else await this.workspace.writeFile(resolved, encoded);
+    this.track(resolved);
+  }
+
+  async appendFile(path: string, content: FileContent, options?: unknown): Promise<void> {
+    const resolved = normalize(path);
+    await this.workspace.mkdir(parentOf(resolved), { recursive: true });
+    const encoded = encodeContent(content, options);
+    if (encoded instanceof Uint8Array) {
+      const existing = await this.workspace.readFileBytes(resolved).catch(() => null);
+      const combined = new Uint8Array((existing?.length ?? 0) + encoded.length);
+      if (existing) combined.set(existing);
+      combined.set(encoded, existing?.length ?? 0);
+      await this.workspace.writeFileBytes(resolved, combined);
+    } else {
+      await this.workspace.appendFile(resolved, encoded);
+    }
+    this.track(resolved);
+  }
+
+  async exists(path: string): Promise<boolean> {
+    return await this.workspace.exists(normalize(path));
+  }
+
+  async stat(path: string): Promise<FsStat> {
+    const resolved = normalize(path);
+    const stat = await this.workspace.stat(resolved);
+    if (!stat) throw enoent(resolved);
+    return statFrom(stat as WorkspaceEntry);
+  }
+
+  async lstat(path: string): Promise<FsStat> {
+    const resolved = normalize(path);
+    const stat = this.workspace.lstat ? await this.workspace.lstat(resolved) : await this.workspace.stat(resolved);
+    if (!stat) throw enoent(resolved);
+    return statFrom(stat as WorkspaceEntry);
+  }
+
+  async mkdir(path: string, options?: MkdirOptions): Promise<void> {
+    const resolved = normalize(path);
+    if (!options?.recursive && await this.workspace.exists(resolved)) throw eexist(resolved);
+    await this.workspace.mkdir(resolved, options);
+    this.track(resolved);
+  }
+
+  async readdir(path: string): Promise<string[]> {
+    const entries = await this.readEntries(path);
+    return entries.map((entry) => entry.name).sort();
+  }
+
+  async readdirWithFileTypes(path: string) {
+    return (await this.readEntries(path)).map((entry) => ({
+      name: entry.name,
+      isFile: entry.type === 'file',
+      isDirectory: entry.type === 'directory',
+      isSymbolicLink: entry.type === 'symlink',
+    }));
+  }
+
+  async rm(path: string, options?: RmOptions): Promise<void> {
+    const resolved = normalize(path);
+    await this.workspace.rm(resolved, options);
+    for (const known of [...this.knownPaths]) {
+      if (known === resolved || known.startsWith(`${resolved}/`)) this.knownPaths.delete(known);
+    }
+  }
+
+  async cp(src: string, dest: string, options?: CpOptions): Promise<void> {
+    await this.workspace.cp(normalize(src), normalize(dest), options);
+    await this.refresh();
+  }
+
+  async mv(src: string, dest: string): Promise<void> {
+    await this.workspace.mv(normalize(src), normalize(dest));
+    await this.refresh();
+  }
+
+  resolvePath(base: string, path: string): string {
+    if (path.startsWith('/')) return normalize(path);
+    return normalize(`${base.replace(/\/$/, '')}/${path}`);
+  }
+
+  getAllPaths(): string[] {
+    return [...this.knownPaths].sort();
+  }
+
+  async chmod(path: string): Promise<void> {
+    if (!await this.exists(path)) throw enoent(path);
+  }
+
+  async symlink(target: string, linkPath: string): Promise<void> {
+    const resolved = normalize(linkPath);
+    await this.workspace.symlink(normalize(target), resolved);
+    this.track(resolved);
+  }
+
+  async link(existingPath: string, newPath: string): Promise<void> {
+    await this.cp(existingPath, newPath);
+  }
+
+  async readlink(path: string): Promise<string> {
+    return await this.workspace.readlink(normalize(path));
+  }
+
+  async realpath(path: string): Promise<string> {
+    const resolved = normalize(path);
+    if (!await this.exists(resolved)) throw enoent(resolved);
+    return resolved;
+  }
+
+  async utimes(path: string): Promise<void> {
+    if (!await this.exists(path)) throw enoent(path);
+  }
+
+  private async readEntries(path: string): Promise<WorkspaceEntry[]> {
+    const resolved = normalize(path);
+    const stat = await this.workspace.stat(resolved);
+    if (!stat) throw enoent(resolved);
+    if (stat.type !== 'directory') throw enotdir(resolved);
+    const entries = await this.workspace.readDir(resolved);
+    for (const entry of entries) this.track(entry.path);
+    return entries as WorkspaceEntry[];
+  }
+
+  private async refreshDir(path: string): Promise<void> {
+    if (!await this.workspace.exists(path)) return;
+    this.track(path);
+    const stat = await this.workspace.stat(path);
+    if (stat?.type !== 'directory') return;
+    for (const entry of await this.workspace.readDir(path)) {
+      this.track(entry.path);
+      if (entry.type === 'directory') await this.refreshDir(entry.path);
+    }
+  }
+
+  private track(path: string): void {
+    const resolved = normalize(path);
+    this.knownPaths.add(resolved);
+    this.addParents(resolved);
+  }
+
+  private addParents(path: string): void {
+    let current = parentOf(path);
+    while (current && !this.knownPaths.has(current)) {
+      this.knownPaths.add(current);
+      if (current === '/') break;
+      current = parentOf(current);
+    }
+  }
+}
+
+export async function createWorkspaceBash(workspace: WorkspaceLike, cwd = '/') {
+  const fs = new WorkspaceBackedFileSystem(workspace);
+  await fs.refresh();
+  return new Bash({
+    fs,
+    cwd: normalize(cwd),
+    commands: allowedCommands,
+    customCommands: [createGrepCommand('grep'), createGrepCommand('egrep'), createGrepCommand('fgrep'), createGrepCommand('rg')],
+    executionLimits: {
+      maxCommandCount: 300,
+      maxLoopIterations: 1000,
+      maxStringLength: 1_000_000,
+      maxGlobOperations: 10_000,
+      maxHeredocSize: 1_000_000,
+    },
+    defenseInDepth: true,
+  });
+}
+
+export function cloudflareTerminalSandbox({ workspace, cwd = '/' }: CloudflareTerminalOptions): SandboxFactory {
   const normalizedCwd = normalize(cwd);
 
-  const resolvePath = (path: string) => {
-    if (path.startsWith('/')) return normalize(path);
-    return normalize(`${normalizedCwd}/${path}`);
-  };
+  const createSessionEnv = async (): Promise<SessionEnv> => {
+    const bash = await createWorkspaceBash(workspace, normalizedCwd);
+    const fs = bash.fs;
 
-  const exec = async (command: string, options?: { cwd?: string }): Promise<ShellResult> => {
-    const commandCwd = options?.cwd ? resolvePath(options.cwd) : normalizedCwd;
-    const code = `async () => {\n${terminalRuntime}\nreturn await run(${JSON.stringify(command)}, ${JSON.stringify(commandCwd)});\n}`;
-    const { result, error, logs } = await executor.execute(code, [stateProvider]);
-    if (error) {
-      return {
-        stdout: '',
-        stderr: error + (logs?.length ? `\n${logs.join('\n')}` : ''),
-        exitCode: 1,
-      };
-    }
-    return { stdout: formatResult(result), stderr: '', exitCode: 0 };
-  };
+    const exec = async (command: string, options?: { cwd?: string; signal?: AbortSignal; timeout?: number }): Promise<ShellResult> => {
+      const timeoutSignal = typeof options?.timeout === 'number' ? AbortSignal.timeout(options.timeout * 1000) : undefined;
+      const signal = options?.signal && timeoutSignal ? AbortSignal.any([options.signal, timeoutSignal]) : (options?.signal ?? timeoutSignal);
+      const result = await bash.exec(command, { cwd: options?.cwd ? fs.resolvePath(normalizedCwd, options.cwd) : normalizedCwd, signal });
+      return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+    };
 
-  const createSessionEnv = async (): Promise<SessionEnv> => ({
-    exec,
-    readFile: (path) => fs.readFile(resolvePath(path)),
-    readFileBuffer: (path) => fs.readFileBytes(resolvePath(path)),
-    writeFile: async (path, content) => {
-      const resolved = resolvePath(path);
-      const parent = resolved.replace(/\/[^/]*$/, '') || '/';
-      await fs.mkdir(parent, { recursive: true }).catch(() => undefined);
-      if (typeof content === 'string') await workspace.writeFile(resolved, content);
-      else await workspace.writeFileBytes(resolved, content);
-    },
-    stat: async (path) => adaptStat(await fs.stat(resolvePath(path))),
-    readdir: (path) => fs.readdir(resolvePath(path)),
-    exists: (path) => fs.exists(resolvePath(path)),
-    mkdir: (path, options) => fs.mkdir(resolvePath(path), options),
-    rm: (path, options) => fs.rm(resolvePath(path), options),
-    cwd: normalizedCwd,
-    resolvePath,
-  });
+    const resolvePath = (path: string) => fs.resolvePath(normalizedCwd, path);
+
+    return {
+      exec,
+      readFile: (path) => fs.readFile(resolvePath(path)),
+      readFileBuffer: (path) => fs.readFileBuffer(resolvePath(path)),
+      writeFile: (path, content) => fs.writeFile(resolvePath(path), content),
+      stat: async (path) => adaptFlueStat(await fs.stat(resolvePath(path)) as unknown as FileStat),
+      readdir: (path) => fs.readdir(resolvePath(path)),
+      exists: (path) => fs.exists(resolvePath(path)),
+      mkdir: (path, options) => fs.mkdir(resolvePath(path), options),
+      rm: (path, options) => fs.rm(resolvePath(path), options),
+      cwd: normalizedCwd,
+      resolvePath,
+    };
+  };
 
   return {
     createSessionEnv,

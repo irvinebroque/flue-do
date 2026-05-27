@@ -1,6 +1,6 @@
 import type { Workspace } from '@cloudflare/shell';
 
-const seedMarker = '/.demo-v5';
+const seedMarker = '/.demo-v6';
 
 const files: Record<string, string> = {
   '/workspace/foo.txt': 'foo\n',
@@ -10,7 +10,7 @@ const files: Record<string, string> = {
     '# Serverless Agent Harness',
     '',
     'This demo runs a Flue harness on Cloudflare Workers and Durable Objects.',
-    'Terminal commands execute through @cloudflare/shell and a Dynamic Worker.',
+    'Terminal commands are interpreted by just-bash and operate on a durable @cloudflare/shell Workspace.',
     'No container sandbox is required for this demonstration.',
     '',
   ].join('\n'),
