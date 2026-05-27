@@ -1,10 +1,16 @@
 import { createAgent } from '@flue/runtime';
 import { getDefaultWorkspace } from '@flue/runtime/cloudflare';
+import type { MiddlewareHandler } from 'hono';
 import { cloudflareTerminalSandbox } from '../lib/cloudflare-terminal';
 import { seedDemoWorkspace } from '../lib/demo-workspace';
 
 /** Model id passed to Flue for the hosted coding-agent session. */
 const model = 'cloudflare/openai/gpt-5.5';
+
+/** Expose this created agent over Flue's POST /agents/:name/:id route. */
+export const route: MiddlewareHandler = async (_c, next) => {
+  await next();
+};
 
 /**
  * Flue 0.8 agent definition for the serverless coding demo.
