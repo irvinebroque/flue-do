@@ -1,4 +1,6 @@
 import { flue, type Fetchable } from '@flue/runtime/app';
+import { indexDirectAgentRunResponse, type WaitUntilLike } from './lib/run-index';
+import type { ArtifactEnv } from './lib/artifacts';
 
 /** Flue's Worker fetch handler for agent routes, run streams, and event logs. */
 const flueApp = flue();
@@ -450,7 +452,7 @@ const html = String.raw`<!doctype html>
             <span id="run-id">No run yet</span>
           </div>
           <div class="prompt-row">
-            <textarea id="message" name="message" aria-label="Prompt">Use the terminal to inspect this workspace and prove the serverless demo works. Show familiar commands like cat and grep, then write a short note to /tmp/demo-output.md and show it.</textarea>
+            <textarea id="message" name="message" aria-label="Prompt">Inspect prior runs, prepare your canonical Artifacts repo, explain which files control your behavior, then propose one low-risk self-improvement. If you make a change, commit it on a self-improve branch and push it.</textarea>
             <button class="send-button" id="run-button" type="submit">Run</button>
           </div>
         </form>
@@ -657,7 +659,7 @@ const html = String.raw`<!doctype html>
       chatLog.innerHTML = '';
       const section = document.createElement('section');
       section.className = 'empty-state';
-      section.innerHTML = '<div class="empty-card bg-kumo-base border-kumo-hairline"><h1>What should the agent show?</h1><p>Ask the demo to prove it can inspect files, run terminal commands, write to its workspace, and return a structured outcome. Reuse this chat to show that the same Durable Object session remembers previous turns.</p></div>';
+      section.innerHTML = '<div class="empty-card bg-kumo-base border-kumo-hairline"><h1>What should the agent improve?</h1><p>Ask the demo to inspect prior global runs, prepare its canonical Cloudflare Artifacts repository, edit its own prompt or context, and push a self-improvement branch for an external deployer.</p></div>';
       chatLog.appendChild(section);
       setRunId(chat.runs.at(-1)?.runId || 'No run yet');
     }
@@ -950,7 +952,7 @@ const html = String.raw`<!doctype html>
 
 export default {
   /** Serves the demo UI at `/` and delegates all Flue routes to the runtime app. */
-  fetch(request, env, ctx) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/') {
       return new Response(html, {
@@ -961,6 +963,41 @@ export default {
       });
     }
 
+    const capture = await directAgentRunPointer(request);
+    if (capture) {
+      const response = await (flueApp as Fetchable).fetch(request, env, ctx);
+      return indexDirectAgentRunResponse({ response, env: env as ArtifactEnv, ctx: ctx as WaitUntilLike, ...capture });
+    }
+
     return (flueApp as Fetchable).fetch(request, env, ctx);
   },
 } satisfies Fetchable;
+
+async function directAgentRunPointer(request: Request) {
+  if (request.method !== 'POST') return null;
+  if (!(request.headers.get('accept') || '').includes('text/event-stream')) return null;
+  const match = new URL(request.url).pathname.match(/^\/agents\/([^/]+)\/([^/]+)$/);
+  if (!match) return null;
+  let payload: unknown;
+  try {
+    payload = await request.clone().json();
+  } catch {
+    return null;
+  }
+  const prompt = payload && typeof payload === 'object' && 'message' in payload && typeof payload.message === 'string' ? payload.message : '';
+  if (!prompt) return null;
+  const session = payload && typeof payload === 'object' && 'session' in payload && typeof payload.session === 'string' && payload.session.trim() !== '' ? payload.session.trim() : 'default';
+  let agentName = '';
+  let agentInstanceId = '';
+  try {
+    agentName = decodeURIComponent(match[1] || '');
+    agentInstanceId = decodeURIComponent(match[2] || '');
+  } catch {
+    return null;
+  }
+  return {
+    agentName,
+    agentInstanceId,
+    session,
+  };
+}

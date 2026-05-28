@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "flue dev --target cloudflare",
-    "build": "flue build --target cloudflare",
-    "deploy": "flue build --target cloudflare && wrangler deploy",
+    "build": "flue build --target cloudflare && node scripts/patch-flue-wrangler.mjs",
+    "deploy": "npm run build && wrangler deploy --config dist/wrangler.jsonc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
