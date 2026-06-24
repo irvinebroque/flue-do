@@ -21,6 +21,6 @@
     "@flue/cli": "0.8.0-beta.6",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6",
-    "wrangler": "^4.95.0"
+    "wrangler": "^4.104.0"
   }
 }
